@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-create-key-package"
+description = "Enables the create_key_package command without any pre-configured scope."
+commands.allow = ["create_key_package"]
+
+[[permission]]
+identifier = "deny-create-key-package"
+description = "Denies the create_key_package command without any pre-configured scope."
+commands.deny = ["create_key_package"]

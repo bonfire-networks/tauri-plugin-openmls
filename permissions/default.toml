@@ -1,0 +1,13 @@
+[default]
+description = "Allows all MLS plugin commands"
+permissions = [
+    "allow-init-user",
+    "allow-create-group",
+    "allow-load-group",
+    "allow-join-group",
+    "allow-encrypt",
+    "allow-decrypt",
+    "allow-add-member",
+    "allow-export-ratchet-tree",
+    "allow-create-key-package",
+]

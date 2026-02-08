@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-init-user"
+description = "Enables the init_user command without any pre-configured scope."
+commands.allow = ["init_user"]
+
+[[permission]]
+identifier = "deny-init-user"
+description = "Denies the init_user command without any pre-configured scope."
+commands.deny = ["init_user"]
