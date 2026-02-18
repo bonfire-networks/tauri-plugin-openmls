@@ -8,11 +8,13 @@ Allows all MLS plugin commands
 - `allow-create-group`
 - `allow-load-group`
 - `allow-join-group`
+- `allow-delete-group`
 - `allow-encrypt`
 - `allow-decrypt`
 - `allow-add-member`
 - `allow-export-ratchet-tree`
 - `allow-create-key-package`
+- `allow-extract-group-id`
 
 ## Permission Table
 
@@ -130,6 +132,32 @@ Denies the decrypt command without any pre-configured scope.
 <tr>
 <td>
 
+`openmls:allow-delete-group`
+
+</td>
+<td>
+
+Enables the delete_group command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-delete-group`
+
+</td>
+<td>
+
+Denies the delete_group command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `openmls:allow-encrypt`
 
 </td>
@@ -175,6 +203,32 @@ Enables the export_ratchet_tree command without any pre-configured scope.
 <td>
 
 Denies the export_ratchet_tree command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-extract-group-id`
+
+</td>
+<td>
+
+Enables the extract_group_id command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-extract-group-id`
+
+</td>
+<td>
+
+Denies the extract_group_id command without any pre-configured scope.
 
 </td>
 </tr>

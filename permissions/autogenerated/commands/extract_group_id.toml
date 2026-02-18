@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-extract-group-id"
+description = "Enables the extract_group_id command without any pre-configured scope."
+commands.allow = ["extract_group_id"]
+
+[[permission]]
+identifier = "deny-extract-group-id"
+description = "Denies the extract_group_id command without any pre-configured scope."
+commands.deny = ["extract_group_id"]

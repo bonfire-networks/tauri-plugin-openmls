@@ -116,6 +116,27 @@ fn sanitize_filename(s: &str) -> String {
         .collect()
 }
 
+/// Debug: dump openmls_group_data summary for a user's DB.
+fn debug_dump_group_data(db_path: &PathBuf, user_id: &str, label: &str) {
+    let user_db = db_path.join(format!("mls_{}.db", sanitize_filename(user_id)));
+    let Ok(conn) = rusqlite::Connection::open(&user_db) else { return };
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM openmls_group_data", [], |r| r.get(0))
+        .unwrap_or(-1);
+    eprintln!("[MLS] {label}: openmls_group_data total rows={total}");
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT DISTINCT hex(group_id), COUNT(*) FROM openmls_group_data GROUP BY group_id"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        }) {
+            for row in rows.flatten() {
+                eprintln!("[MLS] {label}:   group hex={}… entries={}", &row.0[..40.min(row.0.len())], row.1);
+            }
+        }
+    };
+}
+
 /// Read the persisted public key for a user from a metadata table in their MLS SQLite DB.
 fn load_persisted_public_key(db_path: &PathBuf, user_id: &str) -> Option<Vec<u8>> {
     let user_db = db_path.join(format!("mls_{}.db", sanitize_filename(user_id)));
@@ -270,7 +291,13 @@ async fn create_group(
         GroupId::from_slice(group_id_bytes),
         credential_with_key.clone(),
     )
-    .map_err(|e| format!("Failed to create group: {e:?}"))?;
+    .map_err(|e| {
+        eprintln!("[MLS] create_group FAILED (storage error?): {e:?}");
+        format!("Failed to create group: {e:?}")
+    })?;
+
+    eprintln!("[MLS] create_group: MlsGroup created OK");
+    debug_dump_group_data(&s.db_path, &user_id, "create_group");
 
     let ratchet_tree = group
         .export_ratchet_tree()
@@ -294,22 +321,33 @@ async fn load_group(
     let mut s = state.lock().await;
 
     if s.groups.contains_key(&group_id) {
-        eprintln!("[MLS] load_group: already cached");
+        eprintln!("[MLS] load_group: already cached in memory");
         return Ok(true);
     }
 
-    let provider = s.providers.get(&user_id)
-        .ok_or_else(|| format!("User not initialized: {user_id}"))?;
+    let provider = match s.providers.get(&user_id) {
+        Some(p) => p, 
+        None => {
+            eprintln!("[MLS] load_group: user not initialized: {user_id}");
+            return Err(format!("User not initialized: {user_id}"));
+        }
+    };
+
+    debug_dump_group_data(&s.db_path, &user_id, "load_group");
 
     let mls_group_id = GroupId::from_slice(group_id.as_bytes());
     match MlsGroup::load(provider.storage(), &mls_group_id) {
         Ok(Some(group)) => {
+            eprintln!("[MLS] load_group: loaded from SQLite OK");
             s.groups.insert(group_id, group);
             Ok(true)
         }
-        Ok(None) => Ok(false),
+        Ok(None) => {
+            eprintln!("[MLS] load_group: not found in SQLite (Ok(None))");
+            Ok(false)
+        }
         Err(e) => {
-            log::warn!("Failed to load group {group_id}: {e:?}");
+            eprintln!("[MLS] load_group: SQLite load error: {e:?}");
             Ok(false)
         }
     }
@@ -322,12 +360,12 @@ async fn join_group(
     group_id: String,
     welcome_b64: String,
     ratchet_tree_b64: String,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     eprintln!("[MLS] join_group called: user={user_id}, group={group_id}");
     let mut s = state.lock().await;
 
     if s.groups.contains_key(&group_id) {
-        return Ok(());
+        return Ok(serde_json::json!({ "groupId": group_id }));
     }
 
     let provider = s.providers.get(&user_id)
@@ -361,8 +399,13 @@ async fn join_group(
         .into_group(provider)
         .map_err(|e| format!("Failed to join group: {e:?}"))?;
 
-    s.groups.insert(group_id, group);
-    Ok(())
+    // Use the MLS-internal group_id as the canonical key (sender's ULID)
+    let actual_group_id = String::from_utf8(group.group_id().as_slice().to_vec())
+        .map_err(|e| format!("Group ID is not valid UTF-8: {e}"))?;
+    eprintln!("[MLS] join_group: MLS group_id={actual_group_id} (passed={group_id})");
+
+    s.groups.insert(actual_group_id.clone(), group);
+    Ok(serde_json::json!({ "groupId": actual_group_id }))
 }
 
 #[tauri::command]
@@ -540,6 +583,74 @@ async fn create_key_package(
     }))
 }
 
+#[tauri::command]
+async fn delete_group(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+    group_id: String,
+) -> Result<(), String> {
+    eprintln!("[MLS] delete_group called: user={user_id}, group={group_id}");
+    let mut s = state.lock().await;
+
+    // Remove from in-memory cache first
+    let cached = s.groups.remove(&group_id);
+
+    let provider = s.providers.get(&user_id)
+        .ok_or_else(|| format!("User not initialized: {user_id}"))?;
+
+    if let Some(mut group) = cached {
+        group.delete(provider.storage())
+            .map_err(|e| format!("Failed to delete group from storage: {e:?}"))?;
+        eprintln!("[MLS] delete_group: removed from cache + storage");
+    } else {
+        // Not in cache — try loading from SQLite to delete it
+        let group_id_bytes = group_id.as_bytes();
+        if let Some(mut group) = MlsGroup::load(
+            provider.storage(),
+            &GroupId::from_slice(group_id_bytes),
+        ).map_err(|e| format!("Storage error: {e:?}"))? {
+            group.delete(provider.storage())
+                .map_err(|e| format!("Failed to delete group from storage: {e:?}"))?;
+            eprintln!("[MLS] delete_group: loaded from SQLite and deleted");
+        } else {
+            eprintln!("[MLS] delete_group: group not found (nothing to delete)");
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract the MLS group_id from a ciphertext blob without decrypting.
+/// Works for PrivateMessage and PublicMessage (the group_id is in the framing header).
+/// Returns null for Welcome messages (group_id is encrypted inside).
+#[tauri::command]
+async fn extract_group_id(
+    message_b64: String,
+) -> Result<Option<String>, String> {
+    let bytes = BASE64.decode(&message_b64)
+        .map_err(|e| format!("Invalid base64: {e}"))?;
+
+    let mls_message_in = MlsMessageIn::tls_deserialize(&mut bytes.as_slice())
+        .map_err(|e| format!("Failed to deserialize MLS message: {e:?}"))?;
+
+    match mls_message_in.extract() {
+        MlsMessageBodyIn::PrivateMessage(m) => {
+            let pm: ProtocolMessage = m.into();
+            let gid = String::from_utf8(pm.group_id().as_slice().to_vec())
+                .map_err(|e| format!("Group ID is not valid UTF-8: {e}"))?;
+            Ok(Some(gid))
+        }
+        MlsMessageBodyIn::PublicMessage(m) => {
+            let pm: ProtocolMessage = m.into();
+            let gid = String::from_utf8(pm.group_id().as_slice().to_vec())
+                .map_err(|e| format!("Group ID is not valid UTF-8: {e}"))?;
+            Ok(Some(gid))
+        }
+        // Welcome messages don't expose group_id without processing
+        _ => Ok(None),
+    }
+}
+
 // ── Plugin entry point ─────────────────────────────────────────────
 
 /// Initialize the OpenMLS plugin. Register with `.plugin(tauri_plugin_openmls::init())`.
@@ -550,11 +661,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             create_group,
             load_group,
             join_group,
+            delete_group,
             encrypt,
             decrypt,
             add_member,
             export_ratchet_tree,
             create_key_package,
+            extract_group_id,
         ])
         .setup(|app, _api| {
             let db_path = app.path().app_data_dir()

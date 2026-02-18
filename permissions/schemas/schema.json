@@ -343,6 +343,18 @@
           "markdownDescription": "Denies the decrypt command without any pre-configured scope."
         },
         {
+          "description": "Enables the delete_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-group",
+          "markdownDescription": "Enables the delete_group command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-group",
+          "markdownDescription": "Denies the delete_group command without any pre-configured scope."
+        },
+        {
           "description": "Enables the encrypt command without any pre-configured scope.",
           "type": "string",
           "const": "allow-encrypt",
@@ -365,6 +377,18 @@
           "type": "string",
           "const": "deny-export-ratchet-tree",
           "markdownDescription": "Denies the export_ratchet_tree command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the extract_group_id command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-extract-group-id",
+          "markdownDescription": "Enables the extract_group_id command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the extract_group_id command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-extract-group-id",
+          "markdownDescription": "Denies the extract_group_id command without any pre-configured scope."
         },
         {
           "description": "Enables the init_user command without any pre-configured scope.",
@@ -403,10 +427,10 @@
           "markdownDescription": "Denies the load_group command without any pre-configured scope."
         },
         {
-          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`",
+          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`"
+          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`"
         }
       ]
     }

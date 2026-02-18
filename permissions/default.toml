@@ -5,9 +5,11 @@ permissions = [
     "allow-create-group",
     "allow-load-group",
     "allow-join-group",
+    "allow-delete-group",
     "allow-encrypt",
     "allow-decrypt",
     "allow-add-member",
     "allow-export-ratchet-tree",
     "allow-create-key-package",
+    "allow-extract-group-id",
 ]
