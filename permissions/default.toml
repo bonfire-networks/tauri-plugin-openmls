@@ -12,4 +12,5 @@ permissions = [
     "allow-export-ratchet-tree",
     "allow-create-key-package",
     "allow-extract-group-id",
+    "allow-get-group-fingerprints",
 ]

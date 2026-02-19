@@ -391,6 +391,18 @@
           "markdownDescription": "Denies the extract_group_id command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_group_fingerprints command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-group-fingerprints",
+          "markdownDescription": "Enables the get_group_fingerprints command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_group_fingerprints command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-group-fingerprints",
+          "markdownDescription": "Denies the get_group_fingerprints command without any pre-configured scope."
+        },
+        {
           "description": "Enables the init_user command without any pre-configured scope.",
           "type": "string",
           "const": "allow-init-user",
@@ -427,10 +439,10 @@
           "markdownDescription": "Denies the load_group command without any pre-configured scope."
         },
         {
-          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`",
+          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-fingerprints`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`"
+          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-fingerprints`"
         }
       ]
     }
