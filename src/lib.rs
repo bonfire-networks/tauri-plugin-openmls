@@ -1,8 +1,6 @@
 //! Native OpenMLS backend for the Bonfire Tauri app.
 //!
-//! Provides a Tauri plugin ("openmls") that implements the same MLS backend
-//! interface as the WASM version (`mls-backend.js`), using SQLite for
-//! persistent storage.
+//! Provides a Tauri plugin ("openmls") that implements the same MLS backend interface as the WASM version (`mls-backend.js`), using SQLite for persistent storage.
 //!
 //! Usage: `.plugin(tauri_plugin_openmls::init())` in your Tauri builder.
 //! JS calls: `invoke('plugin:openmls|command_name', { ... })`
@@ -26,6 +24,7 @@ use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tokio::sync::Mutex;
 
 // ── JSON codec for SQLite storage ──────────────────────────────────
@@ -89,6 +88,7 @@ impl OpenMlsProvider for TauriOpenMLSProvider {
 
 pub struct MlsState {
     db_path: PathBuf,
+    app_handle: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
     providers: HashMap<String, TauriOpenMLSProvider>,
     credentials: HashMap<String, (CredentialWithKey, SignatureKeyPair)>,
     groups: HashMap<String, MlsGroup>,
@@ -98,9 +98,27 @@ impl MlsState {
     pub fn new(db_path: PathBuf) -> Self {
         Self {
             db_path,
+            app_handle: None,
             providers: HashMap::new(),
             credentials: HashMap::new(),
             groups: HashMap::new(),
+        }
+    }
+
+    /// Show a native confirmation dialog. Returns true if confirmed.
+    fn confirm(&self, title: &str, message: &str) -> bool {
+        use tauri_plugin_dialog::MessageDialogButtons;
+        if let Some(handle) = self.app_handle.as_ref()
+            .and_then(|h| h.downcast_ref::<tauri::AppHandle<tauri::Wry>>())
+        {
+            handle.dialog()
+                .message(message)
+                .title(title)
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
+                .blocking_show()
+        } else {
+            true // no handle = skip confirmation
         }
     }
 }
@@ -755,8 +773,274 @@ fn signature_key_to_emoji_fingerprint(sig_key: &[u8]) -> Vec<[&str; 2]> {
     }).collect()
 }
 
+/// Shared helper: remove leaves by index, merge commit, return serialized commit.
+fn do_remove_leaves(
+    provider: &TauriOpenMLSProvider,
+    signer: &SignatureKeyPair,
+    group: &mut MlsGroup,
+    indexes: &[LeafNodeIndex],
+) -> Result<(String, usize), String> {
+    let count = indexes.len();
+    let (commit, _welcome, _group_info) = group
+        .remove_members(provider, signer, indexes)
+        .map_err(|e| format!("Failed to remove members: {e:?}"))?;
+    group.merge_pending_commit(provider)
+        .map_err(|e| format!("Failed to merge commit: {e:?}"))?;
+    let commit_bytes = commit
+        .tls_serialize_detached()
+        .map_err(|e| format!("Serialization error: {e:?}"))?;
+    Ok((BASE64.encode(&commit_bytes), count))
+}
+
+/// Remove specific clients (leaf nodes) from a group by leaf index.
+#[tauri::command]
+async fn remove_group_member_client(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+    group_id: String,
+    leaf_indexes: Vec<u32>,
+) -> Result<serde_json::Value, String> {
+    eprintln!("[MLS] remove_group_member_client called: user={user_id}, group={group_id}, indexes={leaf_indexes:?}");
+    let mut s = state.lock().await;
+
+    if !s.confirm("Remove Client", "Remove this client from the group?") {
+        return Ok(serde_json::json!({ "cancelled": true }));
+    }
+    let MlsState { providers, credentials, groups, .. } = &mut *s;
+
+    let provider = providers.get(&user_id)
+        .ok_or_else(|| format!("User not initialized: {user_id}"))?;
+    let (_, signer) = credentials.get(&user_id)
+        .ok_or_else(|| format!("No credentials for: {user_id}"))?;
+    let group = groups.get_mut(&group_id)
+        .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
+
+    let indexes: Vec<LeafNodeIndex> = leaf_indexes.iter()
+        .map(|&i| LeafNodeIndex::new(i)).collect();
+
+    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &indexes)?;
+    eprintln!("[MLS] remove_group_member_client: removed {count} leaf(s) from group {group_id}");
+    Ok(serde_json::json!({ "commit": commit_b64 }))
+}
+
+/// Remove all clients of a given actor (member_id) from a group.
+/// Resolves leaf indexes internally by matching member identity.
+#[tauri::command]
+async fn remove_group_member(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+    group_id: String,
+    member_id: String,
+) -> Result<serde_json::Value, String> {
+    eprintln!("[MLS] remove_group_member called: user={user_id}, group={group_id}, member={member_id}");
+    let mut s = state.lock().await;
+
+    if !s.confirm("Remove Member", &format!("Remove {member_id} and all their devices from this group?")) {
+        return Ok(serde_json::json!({ "cancelled": true }));
+    }
+    let MlsState { providers, credentials, groups, .. } = &mut *s;
+
+    let provider = providers.get(&user_id)
+        .ok_or_else(|| format!("User not initialized: {user_id}"))?;
+    let (_, signer) = credentials.get(&user_id)
+        .ok_or_else(|| format!("No credentials for: {user_id}"))?;
+    let group = groups.get_mut(&group_id)
+        .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
+
+    let indexes: Vec<LeafNodeIndex> = group.members()
+        .filter(|m| {
+            String::from_utf8(m.credential.serialized_content().to_vec())
+                .unwrap_or_default() == member_id
+        })
+        .map(|m| m.index)
+        .collect();
+
+    if indexes.is_empty() {
+        return Err(format!("Member not found in group: {member_id}"));
+    }
+
+    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &indexes)?;
+    eprintln!("[MLS] remove_group_member: removed {count} leaf(s) of {member_id} from group {group_id}");
+    Ok(serde_json::json!({ "commit": commit_b64, "removedCount": count }))
+}
+
+/// Decommission a client (by signature key) from all loaded groups.
+/// Shows a single native confirmation dialog, then removes the matching
+/// leaf from every group. Returns a list of {groupId, commit} for the caller
+/// to distribute.
+#[tauri::command]
+async fn decommission_client(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+    signature_key: String,
+) -> Result<serde_json::Value, String> {
+    eprintln!("[MLS] decommission_client called: user={user_id}, sig_key={}", &signature_key[..12.min(signature_key.len())]);
+    let mut s = state.lock().await;
+
+    let target_key = BASE64.decode(&signature_key)
+        .map_err(|e| format!("Invalid base64 signature key: {e}"))?;
+
+    // Find all groups containing a matching own-client leaf
+    let group_ids: Vec<String> = s.groups.iter()
+        .filter(|(_gid, group)| {
+            group.members().any(|m| {
+                let identity = String::from_utf8(m.credential.serialized_content().to_vec())
+                    .unwrap_or_default();
+                identity == user_id && m.signature_key.as_slice() == target_key.as_slice()
+            })
+        })
+        .map(|(gid, _)| gid.clone())
+        .collect();
+
+    if group_ids.is_empty() {
+        return Ok(serde_json::json!({ "results": [], "cancelled": false }));
+    }
+
+    if !s.confirm(
+        "Decommission Device",
+        &format!("Remove this device from {} group{}?", group_ids.len(), if group_ids.len() != 1 { "s" } else { "" }),
+    ) {
+        return Ok(serde_json::json!({ "cancelled": true }));
+    }
+
+    let MlsState { providers, credentials, groups, .. } = &mut *s;
+    let provider = providers.get(&user_id)
+        .ok_or_else(|| format!("User not initialized: {user_id}"))?;
+    let (_, signer) = credentials.get(&user_id)
+        .ok_or_else(|| format!("No credentials for: {user_id}"))?;
+
+    // Detect if the target is the current client (same signature key as our signer)
+    let is_self = signer.public() == target_key.as_slice();
+
+    let mut results = Vec::new();
+    for gid in &group_ids {
+        let group = match groups.get_mut(gid) {
+            Some(g) => g,
+            None => continue,
+        };
+
+        if is_self {
+            // Can't use remove_members on self — use leave_group instead
+            match group.leave_group(provider, signer) {
+                Ok(msg) => {
+                    match msg.tls_serialize_detached() {
+                        Ok(bytes) => {
+                            eprintln!("[MLS] decommission_client: left group {gid} (self-remove proposal)");
+                            results.push(serde_json::json!({ "groupId": gid, "commit": BASE64.encode(&bytes), "isSelfRemove": true }));
+                        }
+                        Err(e) => {
+                            eprintln!("[MLS] decommission_client: serialize failed for group {gid}: {e:?}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[MLS] decommission_client: leave_group failed for {gid}: {e:?}");
+                }
+            }
+        } else {
+            let indexes: Vec<LeafNodeIndex> = group.members()
+                .filter(|m| {
+                    let identity = String::from_utf8(m.credential.serialized_content().to_vec())
+                        .unwrap_or_default();
+                    identity == user_id && m.signature_key.as_slice() == target_key.as_slice()
+                })
+                .map(|m| m.index)
+                .collect();
+            if indexes.is_empty() { continue; }
+
+            match do_remove_leaves(provider, signer, group, &indexes) {
+                Ok((commit_b64, count)) => {
+                    eprintln!("[MLS] decommission_client: removed {count} leaf(s) from group {gid}");
+                    results.push(serde_json::json!({ "groupId": gid, "commit": commit_b64 }));
+                }
+                Err(e) => {
+                    eprintln!("[MLS] decommission_client: failed for group {gid}: {e}");
+                }
+            }
+        }
+    }
+
+    Ok(serde_json::json!({ "results": results, "cancelled": false }))
+}
+
+/// Decommission current client from all groups, back up and delete the MLS database.
+/// Returns { results: [{groupId, commit, isSelfRemove}], cancelled: bool }
+#[tauri::command]
+async fn clear_all_data(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+) -> Result<serde_json::Value, String> {
+    eprintln!("[MLS] clear_all_data called for: {user_id}");
+    let mut s = state.lock().await;
+
+    // Confirm with native dialog
+    if !s.confirm(
+        "Clear All Data",
+        "This will remove your device from all groups and delete all encryption keys and message history. You will need to log in again.",
+    ) {
+        return Ok(serde_json::json!({ "results": [], "cancelled": true }));
+    }
+
+    // Decommission: leave all groups
+    let mut results = Vec::new();
+    let own_sig_key = s.credentials.get(&user_id)
+        .map(|(_, sk)| sk.public().to_vec());
+
+    if let Some(target_key) = &own_sig_key {
+        let group_ids: Vec<String> = s.groups.keys().cloned().collect();
+
+        let MlsState { providers, credentials, groups, .. } = &mut *s;
+        if let (Some(provider), Some((_, signer))) = (providers.get(&user_id), credentials.get(&user_id)) {
+            for gid in &group_ids {
+                let group = match groups.get_mut(gid) {
+                    Some(g) => g,
+                    None => continue,
+                };
+
+                // Current client → leave_group (self-remove proposal)
+                let is_self = signer.public() == target_key.as_slice();
+                if is_self {
+                    match group.leave_group(provider, signer) {
+                        Ok(msg) => {
+                            if let Ok(bytes) = msg.tls_serialize_detached() {
+                                eprintln!("[MLS] clear_all_data: left group {gid}");
+                                results.push(serde_json::json!({
+                                    "groupId": gid, "commit": BASE64.encode(&bytes), "isSelfRemove": true
+                                }));
+                            }
+                        }
+                        Err(e) => eprintln!("[MLS] clear_all_data: leave failed for {gid}: {e:?}"),
+                    }
+                }
+            }
+        }
+    }
+
+    // Clear in-memory state
+    s.providers.remove(&user_id);
+    s.credentials.remove(&user_id);
+    s.groups.clear();
+
+    // Back up then delete the SQLite database file
+    let user_db = s.db_path.join(format!("mls_{}.db", sanitize_filename(&user_id)));
+    if user_db.exists() {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let backup = s.db_path.join(format!(
+            "mls_{}.db.bak.{timestamp}", sanitize_filename(&user_id)
+        ));
+        std::fs::rename(&user_db, &backup)
+            .map_err(|e| format!("Failed to back up MLS database: {e}"))?;
+        eprintln!("[MLS] clear_all_data: backed up to {}", backup.display());
+    }
+
+    Ok(serde_json::json!({ "results": results, "cancelled": false }))
+}
+
 /// Get emoji fingerprints for all members in a group.
-/// Returns [{identity, fingerprint: [{emoji, description}], isOwn}]
+/// Returns [{identity, fingerprint, isOwn, index, signatureKey, isCurrentClient}]
 #[tauri::command]
 async fn get_group_fingerprints(
     state: tauri::State<'_, Mutex<MlsState>>,
@@ -768,6 +1052,9 @@ async fn get_group_fingerprints(
     let group = s.groups.get(&group_id)
         .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
 
+    let own_sig_key = s.credentials.get(&user_id)
+        .map(|(_, sk)| sk.public().to_vec());
+
     let mut result = Vec::new();
     for member in group.members() {
         let identity = String::from_utf8(member.credential.serialized_content().to_vec())
@@ -777,10 +1064,16 @@ async fn get_group_fingerprints(
             .map(|[emoji, desc]| serde_json::json!({ "emoji": emoji, "description": desc }))
             .collect();
         let is_own = identity == user_id;
+        let member_sig_key = member.signature_key.as_slice();
+        let is_current_client = is_own
+            && own_sig_key.as_deref() == Some(member_sig_key);
         result.push(serde_json::json!({
             "identity": identity,
             "fingerprint": fingerprint,
             "isOwn": is_own,
+            "index": member.index.u32(),
+            "signatureKey": BASE64.encode(member.signature_key.as_slice()),
+            "isCurrentClient": is_current_client,
         }));
     }
 
@@ -832,6 +1125,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             encrypt,
             decrypt,
             add_member,
+            remove_group_member_client,
+            remove_group_member,
+            decommission_client,
+            clear_all_data,
             export_ratchet_tree,
             create_key_package,
             extract_group_id,
@@ -843,7 +1140,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             std::fs::create_dir_all(&db_path)
                 .expect("Failed to create app data dir");
             eprintln!("[MLS] Plugin setup complete, db_path: {}", db_path.display());
-            app.manage(Mutex::new(MlsState::new(db_path)));
+            let mut state = MlsState::new(db_path);
+            state.app_handle = Some(std::sync::Arc::new(app.clone()));
+            app.manage(Mutex::new(state));
             Ok(())
         })
         .build()

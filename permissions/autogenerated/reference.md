@@ -16,6 +16,10 @@ Allows all MLS plugin commands
 - `allow-create-key-package`
 - `allow-extract-group-id`
 - `allow-get-group-fingerprints`
+- `allow-remove-group-member-client`
+- `allow-remove-group-member`
+- `allow-decommission-client`
+- `allow-clear-all-data`
 
 ## Permission Table
 
@@ -48,6 +52,32 @@ Enables the add_member command without any pre-configured scope.
 <td>
 
 Denies the add_member command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-clear-all-data`
+
+</td>
+<td>
+
+Enables the clear_all_data command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-clear-all-data`
+
+</td>
+<td>
+
+Denies the clear_all_data command without any pre-configured scope.
 
 </td>
 </tr>
@@ -100,6 +130,32 @@ Enables the create_key_package command without any pre-configured scope.
 <td>
 
 Denies the create_key_package command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-decommission-client`
+
+</td>
+<td>
+
+Enables the decommission_client command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-decommission-client`
+
+</td>
+<td>
+
+Denies the decommission_client command without any pre-configured scope.
 
 </td>
 </tr>
@@ -334,6 +390,58 @@ Enables the load_group command without any pre-configured scope.
 <td>
 
 Denies the load_group command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-remove-group-member`
+
+</td>
+<td>
+
+Enables the remove_group_member command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-remove-group-member`
+
+</td>
+<td>
+
+Denies the remove_group_member command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-remove-group-member-client`
+
+</td>
+<td>
+
+Enables the remove_group_member_client command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-remove-group-member-client`
+
+</td>
+<td>
+
+Denies the remove_group_member_client command without any pre-configured scope.
 
 </td>
 </tr>

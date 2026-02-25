@@ -13,4 +13,8 @@ permissions = [
     "allow-create-key-package",
     "allow-extract-group-id",
     "allow-get-group-fingerprints",
+    "allow-remove-group-member-client",
+    "allow-remove-group-member",
+    "allow-decommission-client",
+    "allow-clear-all-data",
 ]
