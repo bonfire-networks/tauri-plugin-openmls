@@ -20,6 +20,8 @@ Allows all MLS plugin commands
 - `allow-remove-group-member`
 - `allow-decommission-client`
 - `allow-clear-all-data`
+- `allow-get-own-fingerprint`
+- `allow-get-key-package-fingerprint`
 
 ## Permission Table
 
@@ -312,6 +314,58 @@ Enables the get_group_fingerprints command without any pre-configured scope.
 <td>
 
 Denies the get_group_fingerprints command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-get-key-package-fingerprint`
+
+</td>
+<td>
+
+Enables the get_key_package_fingerprint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-get-key-package-fingerprint`
+
+</td>
+<td>
+
+Denies the get_key_package_fingerprint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-get-own-fingerprint`
+
+</td>
+<td>
+
+Enables the get_own_fingerprint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-get-own-fingerprint`
+
+</td>
+<td>
+
+Denies the get_own_fingerprint command without any pre-configured scope.
 
 </td>
 </tr>

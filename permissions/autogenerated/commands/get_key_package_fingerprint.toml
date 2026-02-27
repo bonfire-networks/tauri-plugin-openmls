@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-get-key-package-fingerprint"
+description = "Enables the get_key_package_fingerprint command without any pre-configured scope."
+commands.allow = ["get_key_package_fingerprint"]
+
+[[permission]]
+identifier = "deny-get-key-package-fingerprint"
+description = "Denies the get_key_package_fingerprint command without any pre-configured scope."
+commands.deny = ["get_key_package_fingerprint"]

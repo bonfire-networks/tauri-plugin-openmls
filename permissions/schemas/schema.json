@@ -427,6 +427,30 @@
           "markdownDescription": "Denies the get_group_fingerprints command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_key_package_fingerprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-key-package-fingerprint",
+          "markdownDescription": "Enables the get_key_package_fingerprint command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_key_package_fingerprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-key-package-fingerprint",
+          "markdownDescription": "Denies the get_key_package_fingerprint command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_own_fingerprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-own-fingerprint",
+          "markdownDescription": "Enables the get_own_fingerprint command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_own_fingerprint command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-own-fingerprint",
+          "markdownDescription": "Denies the get_own_fingerprint command without any pre-configured scope."
+        },
+        {
           "description": "Enables the init_user command without any pre-configured scope.",
           "type": "string",
           "const": "allow-init-user",
@@ -487,10 +511,10 @@
           "markdownDescription": "Denies the remove_group_member_client command without any pre-configured scope."
         },
         {
-          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`",
+          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`"
+          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`"
         }
       ]
     }

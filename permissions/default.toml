@@ -17,4 +17,6 @@ permissions = [
     "allow-remove-group-member",
     "allow-decommission-client",
     "allow-clear-all-data",
+    "allow-get-own-fingerprint",
+    "allow-get-key-package-fingerprint",
 ]

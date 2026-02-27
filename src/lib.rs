@@ -773,6 +773,14 @@ fn signature_key_to_emoji_fingerprint(sig_key: &[u8]) -> Vec<[&str; 2]> {
     }).collect()
 }
 
+/// Build the JSON array for an emoji fingerprint from a signature public key.
+fn fingerprint_json(sig_key: &[u8]) -> Vec<serde_json::Value> {
+    signature_key_to_emoji_fingerprint(sig_key)
+        .into_iter()
+        .map(|[emoji, desc]| serde_json::json!({ "emoji": emoji, "description": desc }))
+        .collect()
+}
+
 /// Shared helper: remove leaves by index, merge commit, return serialized commit.
 fn do_remove_leaves(
     provider: &TauriOpenMLSProvider,
@@ -1059,12 +1067,9 @@ async fn get_group_fingerprints(
     for member in group.members() {
         let identity = String::from_utf8(member.credential.serialized_content().to_vec())
             .unwrap_or_else(|_| BASE64.encode(member.credential.serialized_content()));
-        let emojis = signature_key_to_emoji_fingerprint(member.signature_key.as_slice());
-        let fingerprint: Vec<serde_json::Value> = emojis.into_iter()
-            .map(|[emoji, desc]| serde_json::json!({ "emoji": emoji, "description": desc }))
-            .collect();
-        let is_own = identity == user_id;
         let member_sig_key = member.signature_key.as_slice();
+        let fingerprint = fingerprint_json(member_sig_key);
+        let is_own = identity == user_id;
         let is_current_client = is_own
             && own_sig_key.as_deref() == Some(member_sig_key);
         result.push(serde_json::json!({
@@ -1111,6 +1116,47 @@ async fn extract_group_id(
     }
 }
 
+/// Get the current client's emoji fingerprint (without needing a group).
+/// Returns {fingerprint, signatureKey} or null if the user has no credentials.
+#[tauri::command]
+async fn get_own_fingerprint(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let s = state.lock().await;
+
+    let Some((_, signer)) = s.credentials.get(&user_id) else {
+        return Ok(None);
+    };
+
+    let pub_key = signer.public().to_vec();
+    Ok(Some(serde_json::json!({
+        "fingerprint": fingerprint_json(&pub_key),
+        "signatureKey": BASE64.encode(&pub_key),
+    })))
+}
+
+/// Extract the emoji fingerprint from a key package without needing a group.
+/// Parses the MLS KeyPackage, reads the leaf node's signature key, and returns
+/// {fingerprint, signatureKey}.
+#[tauri::command]
+async fn get_key_package_fingerprint(
+    key_package_b64: String,
+) -> Result<serde_json::Value, String> {
+    let kp_bytes = BASE64.decode(&key_package_b64)
+        .map_err(|e| format!("Invalid base64: {e}"))?;
+    let kp_in = KeyPackageIn::tls_deserialize(&mut kp_bytes.as_slice())
+        .map_err(|e| format!("Failed to deserialize key package: {e:?}"))?;
+    let crypto = RustCrypto::default();
+    let kp = kp_in.validate(&crypto, ProtocolVersion::Mls10)
+        .map_err(|e| format!("Failed to validate key package: {e:?}"))?;
+    let sig_key = kp.leaf_node().signature_key().as_slice();
+    Ok(serde_json::json!({
+        "fingerprint": fingerprint_json(sig_key),
+        "signatureKey": BASE64.encode(sig_key),
+    }))
+}
+
 // ── Plugin entry point ─────────────────────────────────────────────
 
 /// Initialize the OpenMLS plugin. Register with `.plugin(tauri_plugin_openmls::init())`.
@@ -1133,6 +1179,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             create_key_package,
             extract_group_id,
             get_group_fingerprints,
+            get_own_fingerprint,
+            get_key_package_fingerprint,
         ])
         .setup(|app, _api| {
             let db_path = app.path().app_data_dir()
