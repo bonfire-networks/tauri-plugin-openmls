@@ -533,9 +533,13 @@ async fn add_member(
         .validate(provider.crypto(), ProtocolVersion::Mls10)
         .map_err(|e| format!("Failed to validate key package: {e:?}"))?;
 
-    let (_mls_message_out, welcome_out, _group_info) = group
+    let (mls_message_out, welcome_out, _group_info) = group
         .add_members(provider, signer, &[key_package])
         .map_err(|e| format!("Failed to add member: {e:?}"))?;
+
+    let commit_serialized = mls_message_out
+        .tls_serialize_detached()
+        .map_err(|e| format!("Serialization error: {e:?}"))?;
 
     group.merge_pending_commit(provider)
         .map_err(|e| format!("Failed to merge pending commit: {e:?}"))?;
@@ -551,7 +555,8 @@ async fn add_member(
 
     Ok(serde_json::json!({
         "welcome": BASE64.encode(&welcome_serialized),
-        "ratchetTree": BASE64.encode(&ratchet_tree)
+        "ratchetTree": BASE64.encode(&ratchet_tree),
+        "commit": BASE64.encode(&commit_serialized)
     }))
 }
 
