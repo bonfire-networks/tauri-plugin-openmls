@@ -877,6 +877,46 @@ async fn remove_group_member(
     Ok(serde_json::json!({ "commit": commit_b64, "removedCount": count }))
 }
 
+/// Remove self from a group (leave). Shows a native confirmation dialog.
+/// Returns { commit, removedCount } for distribution to remaining members.
+#[tauri::command]
+async fn remove_self_from_group(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+    group_id: String,
+) -> Result<serde_json::Value, String> {
+    eprintln!("[MLS] remove_self_from_group: user={user_id}, group={group_id}");
+    let mut s = state.lock().await;
+
+    if !s.confirm("Leave Group", "Leave this group? Other members will be notified.") {
+        return Ok(serde_json::json!({ "cancelled": true }));
+    }
+    let MlsState { providers, credentials, groups, .. } = &mut *s;
+
+    let provider = providers.get(&user_id)
+        .ok_or_else(|| format!("User not initialized: {user_id}"))?;
+    let (_, signer) = credentials.get(&user_id)
+        .ok_or_else(|| format!("No credentials for: {user_id}"))?;
+    let group = groups.get_mut(&group_id)
+        .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
+
+    let own_indexes: Vec<LeafNodeIndex> = group.members()
+        .filter(|m| {
+            String::from_utf8(m.credential.serialized_content().to_vec())
+                .unwrap_or_default() == user_id
+        })
+        .map(|m| m.index)
+        .collect();
+
+    if own_indexes.is_empty() {
+        return Err(format!("Self not found in group: {user_id}"));
+    }
+
+    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &own_indexes)?;
+    eprintln!("[MLS] remove_self_from_group: removed {count} leaf(s) from group {group_id}");
+    Ok(serde_json::json!({ "commit": commit_b64, "removedCount": count }))
+}
+
 /// Decommission a client (by signature key) from all loaded groups.
 /// Shows a single native confirmation dialog, then removes the matching
 /// leaf from every group. Returns a list of {groupId, commit} for the caller
@@ -1204,6 +1244,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             create_key_package,
             extract_group_id,
             get_group_member_identities,
+            remove_self_from_group,
             get_group_fingerprints,
             get_own_fingerprint,
             get_key_package_fingerprint,
