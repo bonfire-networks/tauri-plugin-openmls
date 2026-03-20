@@ -496,9 +496,9 @@ async fn decrypt(
             let text = String::from_utf8_lossy(&bytes).into_owned();
             Ok(Some(text))
         }
-        ProcessedMessageContent::StagedCommitMessage(_) => {
-            group.merge_pending_commit(provider)
-                .map_err(|e| format!("Failed to merge commit: {e:?}"))?;
+        ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+            group.merge_staged_commit(provider, *staged_commit)
+                .map_err(|e| format!("Failed to merge staged commit: {e:?}"))?;
             Ok(None)
         }
         _ => Ok(None),
@@ -1052,6 +1052,26 @@ async fn clear_all_data(
     Ok(serde_json::json!({ "results": results, "cancelled": false }))
 }
 
+/// Get member identity strings for a group (lightweight, no fingerprint hashing).
+/// Returns a list of unique identity strings (actor URIs).
+#[tauri::command]
+async fn get_group_member_identities(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    group_id: String,
+) -> Result<Vec<String>, String> {
+    let s = state.lock().await;
+    let group = s.groups.get(&group_id)
+        .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
+    let mut seen = std::collections::HashSet::new();
+    let identities = group.members()
+        .filter_map(|m| {
+            String::from_utf8(m.credential.serialized_content().to_vec()).ok()
+        })
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+    Ok(identities)
+}
+
 /// Get emoji fingerprints for all members in a group.
 /// Returns [{identity, fingerprint, isOwn, index, signatureKey, isCurrentClient}]
 #[tauri::command]
@@ -1183,6 +1203,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             export_ratchet_tree,
             create_key_package,
             extract_group_id,
+            get_group_member_identities,
             get_group_fingerprints,
             get_own_fingerprint,
             get_key_package_fingerprint,

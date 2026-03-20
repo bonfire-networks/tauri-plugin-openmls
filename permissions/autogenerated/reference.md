@@ -15,6 +15,7 @@ Allows all MLS plugin commands
 - `allow-export-ratchet-tree`
 - `allow-create-key-package`
 - `allow-extract-group-id`
+- `allow-get-group-member-identities`
 - `allow-get-group-fingerprints`
 - `allow-remove-group-member-client`
 - `allow-remove-group-member`
@@ -314,6 +315,32 @@ Enables the get_group_fingerprints command without any pre-configured scope.
 <td>
 
 Denies the get_group_fingerprints command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-get-group-member-identities`
+
+</td>
+<td>
+
+Enables the get_group_member_identities command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-get-group-member-identities`
+
+</td>
+<td>
+
+Denies the get_group_member_identities command without any pre-configured scope.
 
 </td>
 </tr>
