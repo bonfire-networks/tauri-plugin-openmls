@@ -900,21 +900,14 @@ async fn remove_self_from_group(
     let group = groups.get_mut(&group_id)
         .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
 
-    let own_indexes: Vec<LeafNodeIndex> = group.members()
-        .filter(|m| {
-            String::from_utf8(m.credential.serialized_content().to_vec())
-                .unwrap_or_default() == user_id
-        })
-        .map(|m| m.index)
-        .collect();
-
-    if own_indexes.is_empty() {
-        return Err(format!("Self not found in group: {user_id}"));
-    }
-
-    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &own_indexes)?;
-    eprintln!("[MLS] remove_self_from_group: removed {count} leaf(s) from group {group_id}");
-    Ok(serde_json::json!({ "commit": commit_b64, "removedCount": count }))
+    // OpenMLS does not allow remove_members on self — must use leave_group
+    let msg = group.leave_group(provider, signer)
+        .map_err(|e| format!("Failed to leave group: {e:?}"))?;
+    let bytes = msg.tls_serialize_detached()
+        .map_err(|e| format!("Serialization error: {e:?}"))?;
+    let commit_b64 = BASE64.encode(&bytes);
+    eprintln!("[MLS] remove_self_from_group: left group {group_id}");
+    Ok(serde_json::json!({ "commit": commit_b64 }))
 }
 
 /// Decommission a client (by signature key) from all loaded groups.

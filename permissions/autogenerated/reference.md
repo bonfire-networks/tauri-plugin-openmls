@@ -16,6 +16,7 @@ Allows all MLS plugin commands
 - `allow-create-key-package`
 - `allow-extract-group-id`
 - `allow-get-group-member-identities`
+- `allow-remove-self-from-group`
 - `allow-get-group-fingerprints`
 - `allow-remove-group-member-client`
 - `allow-remove-group-member`
@@ -523,6 +524,32 @@ Enables the remove_group_member_client command without any pre-configured scope.
 <td>
 
 Denies the remove_group_member_client command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-remove-self-from-group`
+
+</td>
+<td>
+
+Enables the remove_self_from_group command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-remove-self-from-group`
+
+</td>
+<td>
+
+Denies the remove_self_from_group command without any pre-configured scope.
 
 </td>
 </tr>
