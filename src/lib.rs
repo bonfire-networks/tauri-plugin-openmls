@@ -27,6 +27,13 @@ use tauri::{
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tokio::sync::Mutex;
 
+// ── Attachment size limits ──────────────────────────────────────────
+/// Max compressed size per attachment. Base64 adds ~33%, so 48 MB → ~64 MB on the wire,
+/// staying within the server's 64 MB body limit with room for MLS/JSON overhead.
+const ATTACHMENT_MAX_COMPRESSED_BYTES: usize = 48 * 1_048_576;
+/// Max total compressed bytes across all attachments in one message.
+const ATTACHMENT_MAX_TOTAL_BYTES: usize = 48 * 1_048_576;
+
 // ── JSON codec for SQLite storage ──────────────────────────────────
 
 #[derive(Default)]
@@ -55,6 +62,8 @@ impl TauriOpenMLSProvider {
     pub fn new(db_path: &PathBuf, user_id: &str) -> Result<Self, String> {
         let user_db = db_path.join(format!("mls_{}.db", sanitize_filename(user_id)));
         let conn = Connection::open(&user_db).map_err(|e| e.to_string())?;
+        // Fail fast if DB is locked (e.g. from an interrupted upload) rather than blocking forever
+        conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(|e| e.to_string())?;
 
         let mut storage = SqliteStorageProvider::new(conn);
         storage.run_migrations().map_err(|e| e.to_string())?;
@@ -195,22 +204,19 @@ fn extract_attachments_to_disk(json_text: &str, attachments_dir: &std::path::Pat
                 let is_gzip = map.get("encoding").and_then(|v| v.as_str()) == Some("gzip");
                 if is_gzip {
                     if let Some(serde_json::Value::String(content)) = map.get("content").cloned() {
-                        // Only process if it looks like a substantial base64 blob (> 256 chars)
-                        if content.len() > 256 {
-                            if let Ok(gz_bytes) = BASE64.decode(&content) {
-                                // Use sha256 of the gz bytes as stable filename
-                                let mut h = Sha256::new();
-                                h.update(&gz_bytes);
-                                let hash: String = h.finalize().iter().take(8)
-                                    .map(|b| format!("{b:02x}")).collect();
-                                let local_path = dir.join(format!("{hash}.gz"));
-                                if !local_path.exists() {
-                                    std::fs::write(&local_path, &gz_bytes).ok();
-                                }
-                                let path_str = local_path.to_string_lossy().into_owned();
-                                map.remove("content");
-                                map.insert("_localPath".to_owned(), serde_json::Value::String(path_str));
+                        if let Ok(gz_bytes) = BASE64.decode(&content) {
+                            // Use sha256 of the gz bytes as stable filename
+                            let mut h = Sha256::new();
+                            h.update(&gz_bytes);
+                            let hash: String = h.finalize().iter().take(8)
+                                .map(|b| format!("{b:02x}")).collect();
+                            let local_path = dir.join(format!("{hash}.gz"));
+                            if !local_path.exists() {
+                                std::fs::write(&local_path, &gz_bytes).ok();
                             }
+                            let path_str = local_path.to_string_lossy().into_owned();
+                            map.remove("content");
+                            map.insert("_localPath".to_owned(), serde_json::Value::String(path_str));
                         }
                     }
                 }
@@ -549,18 +555,17 @@ fn gzip_bytes(raw: &[u8], path: &str) -> Result<Vec<u8>, String> {
     use flate2::{write::GzEncoder, Compression};
     use std::io::Write;
 
-    const PRE_LIMIT: usize = 65 * 1_048_576;
-    const POST_LIMIT: usize = 50 * 1_048_576;
-
-    if raw.len() > PRE_LIMIT {
-        return Err(format!("File too large ({} MB)", raw.len() / 1_048_576));
-    }
+    // 48 MB compressed keeps the base64-encoded ciphertext within the 64 MB server body limit
     let level = if is_already_compressed(path) { Compression::none() } else { Compression::default() };
     let mut enc = GzEncoder::new(Vec::new(), level);
     enc.write_all(raw).map_err(|e| e.to_string())?;
     let gz = enc.finish().map_err(|e| e.to_string())?;
-    if gz.len() > POST_LIMIT {
-        return Err(format!("File too large after compression ({} MB)", gz.len() / 1_048_576));
+    if gz.len() > ATTACHMENT_MAX_COMPRESSED_BYTES {
+        return Err(format!(
+            "File too large after compression ({} MB, max {} MB)",
+            gz.len() / 1_048_576,
+            ATTACHMENT_MAX_COMPRESSED_BYTES / 1_048_576
+        ));
     }
     Ok(gz)
 }
@@ -586,17 +591,17 @@ async fn store_attachment_result<R: Runtime>(
 
             let local_path_str = local_path.to_string_lossy().into_owned();
             state.lock().await.pending_attachments.insert(id.clone(), (local_path, b64));
-            app.emit("attachment-ready", serde_json::json!({
+            // Ignore emit errors — app may be shutting down
+            let _ = app.emit("attachment-ready", serde_json::json!({
                 "id": id,
                 "size": raw_size,
                 "compressedSize": compressed_size,
                 "localPath": local_path_str,
-            }))
-            .map_err(|e| e.to_string())?;
+            }));
         }
         Err(e) => {
-            app.emit("attachment-failed", serde_json::json!({ "id": id, "error": e }))
-                .map_err(|e2| e2.to_string())?;
+            // Ignore emit errors — app may be shutting down
+            let _ = app.emit("attachment-failed", serde_json::json!({ "id": id, "error": e }));
         }
     }
     Ok(())
@@ -626,14 +631,35 @@ async fn prepare_attachment_file<R: Runtime>(
     path: String,
 ) -> Result<(), String> {
     let result = tokio::task::spawn_blocking(move || {
+        // Fast pre-check via metadata — for already-compressed types raw ≈ compressed,
+        // so we can reject immediately without reading the whole file into memory.
+        // Fast pre-check: already-compressed files won't shrink, so raw size ≈ compressed size.
+        // For compressible files we can't know the final size, but reject anything clearly too large
+        // (compression rarely achieves better than 10:1, so raw > 10× limit is always too big).
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let file_size = meta.len() as usize;
+            // Already-compressed: raw ≈ compressed, apply limit directly.
+            // Compressible: gzip rarely exceeds 2:1, so reject if raw > 2× limit to avoid OOM.
+            let raw_limit = if is_already_compressed(&path) { 1 } else { 2 } * ATTACHMENT_MAX_COMPRESSED_BYTES;
+            if file_size > raw_limit {
+                return Err(format!(
+                    "File too large ({} MB, max {} MB)",
+                    file_size / 1_048_576,
+                    ATTACHMENT_MAX_COMPRESSED_BYTES / 1_048_576,
+                ));
+            }
+        }
         let raw = std::fs::read(&path).map_err(|e| format!("Cannot read file: {e}"))?;
         let raw_size = raw.len();
         gzip_bytes(&raw, &path).map(|gz| (raw_size, gz))
     })
     .await
     .map_err(|e| e.to_string())?;
-    let (raw_size, gz) = result?;
-    store_attachment_result(&app, &state, attachment_id, raw_size, Ok(gz)).await
+    let (raw_size, gz_result) = match result {
+        Ok((raw_size, gz)) => (raw_size, Ok(gz)),
+        Err(e) => (0, Err(e)),
+    };
+    store_attachment_result(&app, &state, attachment_id, raw_size, gz_result).await
 }
 
 /// Remove an attachment: clears it from `pending_attachments` if present, and deletes the `.gz`
@@ -674,15 +700,17 @@ async fn encrypt(
 
     // Substitute attachment placeholders ("__pending_attachment_id:UUID__") with stored base64(gzip(bytes))
     let assembled = if let Some(ids) = attachment_ids {
-        const MAX_TOTAL_ATTACHMENTS: usize = 100 * 1_048_576; // 100 MB total per message
         let mut total: usize = 0;
         let mut text = plaintext;
         for id in ids {
             // Remove from map; localPath stays on disk for sender viewing
             if let Some((_, b64)) = s.pending_attachments.remove(&id) {
-                total += b64.len();
-                if total > MAX_TOTAL_ATTACHMENTS {
-                    return Err(format!("Total attachment size exceeds limit ({} MB)", MAX_TOTAL_ATTACHMENTS / 1_048_576));
+                total += b64.len() * 3 / 4; // b64 is ~33% larger than compressed bytes
+                if total > ATTACHMENT_MAX_TOTAL_BYTES {
+                    return Err(format!(
+                        "Total attachment size exceeds limit ({} MB compressed, max {} MB)",
+                        total / 1_048_576, ATTACHMENT_MAX_TOTAL_BYTES / 1_048_576
+                    ));
                 }
                 text = text.replace(&format!("\"__pending_attachment_id:{id}__\""), &format!("\"{}\"", b64));
             }
@@ -777,14 +805,15 @@ async fn discard_message(
 /// Avoids writing to the system /tmp which is readable by any process.
 /// Stable: same .gz path always produces the same temp path (idempotent on repeated calls).
 #[tauri::command]
-async fn serve_attachment(
-    state: tauri::State<'_, Mutex<MlsState>>,
+async fn serve_attachment<R: Runtime>(
+    app: tauri::AppHandle<R>,
     path: String,
 ) -> Result<String, String> {
-    use flate2::read::GzDecoder;
-    use std::io::Read;
+    use tauri::Manager;
 
-    let serve_tmp_dir = state.lock().await.serve_tmp_dir.clone();
+    let serve_tmp_dir = app.path().app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("attachments/tmp");
 
     // Strip .gz suffix to get the original filename (e.g. "abc123" for "abc123.gz")
     let stem = std::path::Path::new(&path)
@@ -793,12 +822,27 @@ async fn serve_attachment(
         .unwrap_or("attachment");
     let temp_path = serve_tmp_dir.join(stem);
 
+    log::info!("[serve_attachment] request: path={path}");
     if !temp_path.exists() {
-        let gz_bytes = std::fs::read(&path).map_err(|e| format!("Cannot read file: {e}"))?;
-        let mut decoder = GzDecoder::new(gz_bytes.as_slice());
-        let mut raw = Vec::new();
-        decoder.read_to_end(&mut raw).map_err(|e| format!("Decompression failed: {e}"))?;
-        std::fs::write(&temp_path, &raw).map_err(|e| format!("Failed to write temp file: {e}"))?;
+        log::info!("[serve_attachment] decompressing to {}", temp_path.display());
+        let path_clone = path.clone();
+        let temp_path_clone = temp_path.clone();
+        tokio::task::spawn_blocking(move || {
+            use flate2::read::GzDecoder;
+            use std::io::Read;
+            let gz_bytes = std::fs::read(&path_clone).map_err(|e| format!("Cannot read file: {e}"))?;
+            log::info!("[serve_attachment] read {} bytes, decompressing", gz_bytes.len());
+            let mut decoder = GzDecoder::new(gz_bytes.as_slice());
+            let mut raw = Vec::new();
+            decoder.read_to_end(&mut raw).map_err(|e| format!("Decompression failed: {e}"))?;
+            log::info!("[serve_attachment] decompressed to {} bytes, writing", raw.len());
+            std::fs::write(&temp_path_clone, &raw).map_err(|e| format!("Failed to write temp file: {e}"))
+        })
+        .await
+        .map_err(|e| format!("Task error: {e}"))??;
+        log::info!("[serve_attachment] done");
+    } else {
+        log::info!("[serve_attachment] cache hit");
     }
 
     Ok(temp_path.to_string_lossy().into_owned())
