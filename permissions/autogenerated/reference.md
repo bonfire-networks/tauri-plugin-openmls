@@ -9,7 +9,14 @@ Allows all MLS plugin commands
 - `allow-load-group`
 - `allow-join-group`
 - `allow-delete-group`
+- `allow-prepare-attachment-bytes`
+- `allow-prepare-attachment-file`
+- `allow-remove-attachment`
 - `allow-encrypt`
+- `allow-send-message`
+- `allow-discard-message`
+- `allow-serve-attachment`
+- `allow-save-attachment-as`
 - `allow-decrypt`
 - `allow-add-member`
 - `allow-export-ratchet-tree`
@@ -212,6 +219,32 @@ Enables the delete_group command without any pre-configured scope.
 <td>
 
 Denies the delete_group command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-discard-message`
+
+</td>
+<td>
+
+Enables the discard_message command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-discard-message`
+
+</td>
+<td>
+
+Denies the discard_message command without any pre-configured scope.
 
 </td>
 </tr>
@@ -479,6 +512,84 @@ Denies the load_group command without any pre-configured scope.
 <tr>
 <td>
 
+`openmls:allow-prepare-attachment-bytes`
+
+</td>
+<td>
+
+Enables the prepare_attachment_bytes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-prepare-attachment-bytes`
+
+</td>
+<td>
+
+Denies the prepare_attachment_bytes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-prepare-attachment-file`
+
+</td>
+<td>
+
+Enables the prepare_attachment_file command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-prepare-attachment-file`
+
+</td>
+<td>
+
+Denies the prepare_attachment_file command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-remove-attachment`
+
+</td>
+<td>
+
+Enables the remove_attachment command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-remove-attachment`
+
+</td>
+<td>
+
+Denies the remove_attachment command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `openmls:allow-remove-group-member`
 
 </td>
@@ -550,6 +661,84 @@ Enables the remove_self_from_group command without any pre-configured scope.
 <td>
 
 Denies the remove_self_from_group command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-save-attachment-as`
+
+</td>
+<td>
+
+Enables the save_attachment_as command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-save-attachment-as`
+
+</td>
+<td>
+
+Denies the save_attachment_as command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-send-message`
+
+</td>
+<td>
+
+Enables the send_message command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-send-message`
+
+</td>
+<td>
+
+Denies the send_message command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-serve-attachment`
+
+</td>
+<td>
+
+Enables the serve_attachment command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-serve-attachment`
+
+</td>
+<td>
+
+Denies the serve_attachment command without any pre-configured scope.
 
 </td>
 </tr>

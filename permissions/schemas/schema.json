@@ -379,6 +379,18 @@
           "markdownDescription": "Denies the delete_group command without any pre-configured scope."
         },
         {
+          "description": "Enables the discard_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-discard-message",
+          "markdownDescription": "Enables the discard_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discard_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-discard-message",
+          "markdownDescription": "Denies the discard_message command without any pre-configured scope."
+        },
+        {
           "description": "Enables the encrypt command without any pre-configured scope.",
           "type": "string",
           "const": "allow-encrypt",
@@ -499,6 +511,42 @@
           "markdownDescription": "Denies the load_group command without any pre-configured scope."
         },
         {
+          "description": "Enables the prepare_attachment_bytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-prepare-attachment-bytes",
+          "markdownDescription": "Enables the prepare_attachment_bytes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the prepare_attachment_bytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-prepare-attachment-bytes",
+          "markdownDescription": "Denies the prepare_attachment_bytes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the prepare_attachment_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-prepare-attachment-file",
+          "markdownDescription": "Enables the prepare_attachment_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the prepare_attachment_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-prepare-attachment-file",
+          "markdownDescription": "Denies the prepare_attachment_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-attachment",
+          "markdownDescription": "Enables the remove_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-attachment",
+          "markdownDescription": "Denies the remove_attachment command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_group_member command without any pre-configured scope.",
           "type": "string",
           "const": "allow-remove-group-member",
@@ -535,10 +583,46 @@
           "markdownDescription": "Denies the remove_self_from_group command without any pre-configured scope."
         },
         {
-          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`",
+          "description": "Enables the save_attachment_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-attachment-as",
+          "markdownDescription": "Enables the save_attachment_as command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_attachment_as command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-attachment-as",
+          "markdownDescription": "Denies the save_attachment_as command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the send_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-send-message",
+          "markdownDescription": "Enables the send_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the send_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-send-message",
+          "markdownDescription": "Denies the send_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the serve_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-serve-attachment",
+          "markdownDescription": "Enables the serve_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the serve_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-serve-attachment",
+          "markdownDescription": "Denies the serve_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-prepare-attachment-bytes`\n- `allow-prepare-attachment-file`\n- `allow-remove-attachment`\n- `allow-encrypt`\n- `allow-send-message`\n- `allow-discard-message`\n- `allow-serve-attachment`\n- `allow-save-attachment-as`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-encrypt`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`"
+          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-prepare-attachment-bytes`\n- `allow-prepare-attachment-file`\n- `allow-remove-attachment`\n- `allow-encrypt`\n- `allow-send-message`\n- `allow-discard-message`\n- `allow-serve-attachment`\n- `allow-save-attachment-as`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`"
         }
       ]
     }

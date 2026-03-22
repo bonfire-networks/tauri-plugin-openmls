@@ -22,7 +22,7 @@ use openmls_traits::OpenMlsProvider;
 use serde::Serialize;
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    Manager, Runtime,
+    Emitter, Manager, Runtime,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tokio::sync::Mutex;
@@ -88,20 +88,49 @@ impl OpenMlsProvider for TauriOpenMLSProvider {
 
 pub struct MlsState {
     db_path: PathBuf,
+    /// Directory where attachment .gz files are persisted.
+    attachments_dir: PathBuf,
+    /// Temporary directory for decompressed attachments (within app data dir, not system /tmp).
+    serve_tmp_dir: PathBuf,
     app_handle: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
     providers: HashMap<String, TauriOpenMLSProvider>,
     credentials: HashMap<String, (CredentialWithKey, SignatureKeyPair)>,
     groups: HashMap<String, MlsGroup>,
+    /// Pending attachments: id → (local .gz path, base64(gzip(bytes))).
+    /// base64 is dropped after encrypt substitution; localPath persists for viewing.
+    pending_attachments: HashMap<String, (PathBuf, String)>,
+    /// Pending encrypted messages: pendingId → base64(ciphertext), awaiting send.
+    pending_messages: HashMap<String, String>,
 }
 
 impl MlsState {
     pub fn new(db_path: PathBuf) -> Self {
+        let attachments_dir = db_path.join("attachments");
+        std::fs::create_dir_all(&attachments_dir).ok();
+        let serve_tmp_dir = attachments_dir.join("tmp");
+        std::fs::create_dir_all(&serve_tmp_dir).ok();
+        // Clean up decompressed tmp files older than 7 days
+        if let Ok(entries) = std::fs::read_dir(&serve_tmp_dir) {
+            let cutoff = std::time::SystemTime::now()
+                - std::time::Duration::from_secs(7 * 24 * 3600);
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.modified().map(|m| m < cutoff).unwrap_or(false) {
+                        std::fs::remove_file(entry.path()).ok();
+                    }
+                }
+            }
+        }
         Self {
             db_path,
+            attachments_dir,
+            serve_tmp_dir,
             app_handle: None,
             providers: HashMap::new(),
             credentials: HashMap::new(),
             groups: HashMap::new(),
+            pending_attachments: HashMap::new(),
+            pending_messages: HashMap::new(),
         }
     }
 
@@ -132,6 +161,70 @@ fn sanitize_filename(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
         .collect()
+}
+
+/// Generate a random 16-byte hex string for use as a unique ID.
+fn uuid_hex() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // Use SHA2 (already a dep) over time + a counter for uniqueness
+    use sha2::{Sha256, Digest};
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let mut h = Sha256::new();
+    h.update(t.to_le_bytes());
+    h.update(n.to_le_bytes());
+    let result = h.finalize();
+    result.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Walk a decrypted JSON string and extract any gzip attachment content to disk.
+/// Objects with `encoding: "gzip"` and a `content` base64 string get their content
+/// replaced with `_localPath: "/path/to/{sha}.gz"`. Returns the modified JSON string.
+/// Idempotent: if the file already exists (same content), it's not overwritten.
+fn extract_attachments_to_disk(json_text: &str, attachments_dir: &std::path::Path) -> String {
+    use sha2::{Sha256, Digest};
+
+    let Ok(mut val) = serde_json::from_str::<serde_json::Value>(json_text) else {
+        return json_text.to_owned();
+    };
+
+    fn process(val: &mut serde_json::Value, dir: &std::path::Path) {
+        match val {
+            serde_json::Value::Object(map) => {
+                let is_gzip = map.get("encoding").and_then(|v| v.as_str()) == Some("gzip");
+                if is_gzip {
+                    if let Some(serde_json::Value::String(content)) = map.get("content").cloned() {
+                        // Only process if it looks like a substantial base64 blob (> 256 chars)
+                        if content.len() > 256 {
+                            if let Ok(gz_bytes) = BASE64.decode(&content) {
+                                // Use sha256 of the gz bytes as stable filename
+                                let mut h = Sha256::new();
+                                h.update(&gz_bytes);
+                                let hash: String = h.finalize().iter().take(8)
+                                    .map(|b| format!("{b:02x}")).collect();
+                                let local_path = dir.join(format!("{hash}.gz"));
+                                if !local_path.exists() {
+                                    std::fs::write(&local_path, &gz_bytes).ok();
+                                }
+                                let path_str = local_path.to_string_lossy().into_owned();
+                                map.remove("content");
+                                map.insert("_localPath".to_owned(), serde_json::Value::String(path_str));
+                            }
+                        }
+                    }
+                }
+                for v in map.values_mut() { process(v, dir); }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() { process(v, dir); }
+            }
+            _ => {}
+        }
+    }
+
+    process(&mut val, attachments_dir);
+    serde_json::to_string(&val).unwrap_or_else(|_| json_text.to_owned())
 }
 
 /// Debug: dump openmls_group_data summary for a user's DB.
@@ -426,15 +519,179 @@ async fn join_group(
     Ok(serde_json::json!({ "groupId": actual_group_id }))
 }
 
+// ── Attachment helpers ──────────────────────────────────────────────
+
+/// Returns true for formats that are already compressed — gzip would waste CPU and add size.
+fn is_already_compressed(path: &str) -> bool {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    matches!(ext.as_str(),
+        // Archives
+        "zip" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "lz4" | "br" |
+        // Video (already compressed codecs)
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" | "3gp" | "hevc" | "heic" |
+        // Audio (lossy — already compressed)
+        "mp3" | "aac" | "m4a" | "ogg" | "opus" | "flac" |
+        // Images (already compressed)
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "avif" | "jxl" |
+        // Office / container formats (zip-based)
+        "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "apk" | "jar"
+    )
+}
+
+/// Gzip-compress raw bytes. Enforces pre-check (65 MB) and post-limit (50 MB).
+/// For already-compressed formats, wraps in a store-only (level 0) gzip to keep
+/// the uniform `.gz` container without wasting CPU.
+fn gzip_bytes(raw: &[u8], path: &str) -> Result<Vec<u8>, String> {
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
+
+    const PRE_LIMIT: usize = 65 * 1_048_576;
+    const POST_LIMIT: usize = 50 * 1_048_576;
+
+    if raw.len() > PRE_LIMIT {
+        return Err(format!("File too large ({} MB)", raw.len() / 1_048_576));
+    }
+    let level = if is_already_compressed(path) { Compression::none() } else { Compression::default() };
+    let mut enc = GzEncoder::new(Vec::new(), level);
+    enc.write_all(raw).map_err(|e| e.to_string())?;
+    let gz = enc.finish().map_err(|e| e.to_string())?;
+    if gz.len() > POST_LIMIT {
+        return Err(format!("File too large after compression ({} MB)", gz.len() / 1_048_576));
+    }
+    Ok(gz)
+}
+
+async fn store_attachment_result<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &tauri::State<'_, Mutex<MlsState>>,
+    id: String,
+    raw_size: usize,
+    result: Result<Vec<u8>, String>,  // raw gz bytes
+) -> Result<(), String> {
+    match result {
+        Ok(gz) => {
+            let compressed_size = gz.len();
+            let b64 = BASE64.encode(&gz);
+
+            // Persist .gz file to disk so the sender can view it later
+            let local_path = {
+                let s = state.lock().await;
+                s.attachments_dir.join(format!("{id}.gz"))
+            };
+            std::fs::write(&local_path, &gz).map_err(|e| format!("Failed to save attachment: {e}"))?;
+
+            let local_path_str = local_path.to_string_lossy().into_owned();
+            state.lock().await.pending_attachments.insert(id.clone(), (local_path, b64));
+            app.emit("attachment-ready", serde_json::json!({
+                "id": id,
+                "size": raw_size,
+                "compressedSize": compressed_size,
+                "localPath": local_path_str,
+            }))
+            .map_err(|e| e.to_string())?;
+        }
+        Err(e) => {
+            app.emit("attachment-failed", serde_json::json!({ "id": id, "error": e }))
+                .map_err(|e2| e2.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Receive already-WebP-compressed image bytes from JS (the one case where bytes cross the boundary).
+#[tauri::command]
+async fn prepare_attachment_bytes<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, Mutex<MlsState>>,
+    attachment_id: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    let raw_size = bytes.len();
+    let result = tokio::task::spawn_blocking(move || gzip_bytes(&bytes, "bytes"))
+        .await
+        .map_err(|e| e.to_string())?;
+    store_attachment_result(&app, &state, attachment_id, raw_size, result).await
+}
+
+/// Read a non-image file from disk and gzip-compress it. Bytes never enter the webview.
+#[tauri::command]
+async fn prepare_attachment_file<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, Mutex<MlsState>>,
+    attachment_id: String,
+    path: String,
+) -> Result<(), String> {
+    let result = tokio::task::spawn_blocking(move || {
+        let raw = std::fs::read(&path).map_err(|e| format!("Cannot read file: {e}"))?;
+        let raw_size = raw.len();
+        gzip_bytes(&raw, &path).map(|gz| (raw_size, gz))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let (raw_size, gz) = result?;
+    store_attachment_result(&app, &state, attachment_id, raw_size, Ok(gz)).await
+}
+
+/// Remove an attachment: clears it from `pending_attachments` if present, and deletes the `.gz`
+/// file from disk. `local_path` is required when the attachment is no longer pending (e.g. already sent).
+#[tauri::command]
+async fn remove_attachment(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    attachment_id: Option<String>,
+    local_path: Option<String>,
+) -> Result<(), String> {
+    let mut s = state.lock().await;
+    let path_from_pending = attachment_id
+        .and_then(|id| s.pending_attachments.remove(&id))
+        .map(|(p, _)| p);
+    let path = path_from_pending
+        .or_else(|| local_path.map(std::path::PathBuf::from));
+    if let Some(p) = path {
+        // Safety: only delete files inside the app's attachments directory
+        if p.starts_with(&s.attachments_dir) {
+            std::fs::remove_file(&p).ok();
+        }
+    }
+    Ok(())
+}
+
+// ── Encrypt / Decrypt ───────────────────────────────────────────────
+
 #[tauri::command]
 async fn encrypt(
     state: tauri::State<'_, Mutex<MlsState>>,
     user_id: String,
     group_id: String,
     plaintext: String,
+    attachment_ids: Option<Vec<String>>,
 ) -> Result<String, String> {
     eprintln!("[MLS] encrypt called: user={user_id}, group={group_id}");
     let mut s = state.lock().await;
+
+    // Substitute attachment placeholders ("__pending_attachment_id:UUID__") with stored base64(gzip(bytes))
+    let assembled = if let Some(ids) = attachment_ids {
+        const MAX_TOTAL_ATTACHMENTS: usize = 100 * 1_048_576; // 100 MB total per message
+        let mut total: usize = 0;
+        let mut text = plaintext;
+        for id in ids {
+            // Remove from map; localPath stays on disk for sender viewing
+            if let Some((_, b64)) = s.pending_attachments.remove(&id) {
+                total += b64.len();
+                if total > MAX_TOTAL_ATTACHMENTS {
+                    return Err(format!("Total attachment size exceeds limit ({} MB)", MAX_TOTAL_ATTACHMENTS / 1_048_576));
+                }
+                text = text.replace(&format!("\"__pending_attachment_id:{id}__\""), &format!("\"{}\"", b64));
+            }
+        }
+        text
+    } else {
+        plaintext
+    };
+
     let MlsState { providers, credentials, groups, .. } = &mut *s;
 
     let provider = providers.get(&user_id)
@@ -445,14 +702,147 @@ async fn encrypt(
         .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
 
     let mls_message_out = group
-        .create_message(provider, signer, plaintext.as_bytes())
+        .create_message(provider, signer, assembled.as_bytes())
         .map_err(|e| format!("Encryption failed: {e:?}"))?;
 
     let serialized = mls_message_out
         .tls_serialize_detached()
         .map_err(|e| format!("Serialization error: {e:?}"))?;
 
-    Ok(BASE64.encode(&serialized))
+    let b64 = BASE64.encode(&serialized);
+
+    // Store ciphertext — never returns to JS. JS gets only a placeholder ID.
+    let pending_id = format!("__prepared_encrypted_msg:{}__", uuid_hex());
+    s.pending_messages.insert(pending_id.clone(), b64);
+    Ok(pending_id)
+}
+
+/// Send a pending encrypted message. JS builds the full AP JSON body with pendingId as the
+/// `content` value; Rust substitutes it with the real base64 ciphertext and POSTs.
+#[tauri::command]
+async fn send_message(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    pending_id: String,
+    outbox_url: String,
+    access_token: String,
+    body: String,  // Full AP JSON string with pendingId as content placeholder
+) -> Result<serde_json::Value, String> {
+    let b64 = state.lock().await.pending_messages.get(&pending_id).cloned()
+        .ok_or_else(|| format!("No pending message: {pending_id}"))?;
+
+    // Replace the quoted placeholder with the real ciphertext
+    let final_body = body.replace(
+        &format!("\"{}\"", pending_id),
+        &format!("\"{}\"", b64),
+    );
+
+    let client = reqwest::Client::new();
+    let res = client.post(&outbox_url)
+        .bearer_auth(&access_token)
+        .header("Content-Type", "application/activity+json")
+        .body(final_body)
+        .send().await
+        .map_err(|e| e.to_string())?;
+
+    let status = res.status().as_u16();
+    let ok = res.status().is_success();
+    let body_val: serde_json::Value = res.json().await.unwrap_or(serde_json::Value::Null);
+
+    // Clean up on success
+    if ok {
+        state.lock().await.pending_messages.remove(&pending_id);
+    }
+
+    Ok(serde_json::json!({
+        "status": status,
+        "ok": ok,
+        "id": body_val["id"],
+        "object": body_val["object"],
+        "context": body_val["context"],
+        "error": body_val["error"],
+    }))
+}
+
+/// Discard a pending encrypted message (send failed, user cancelled, etc.).
+#[tauri::command]
+async fn discard_message(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    pending_id: String,
+) -> Result<(), String> {
+    state.lock().await.pending_messages.remove(&pending_id);
+    Ok(())
+}
+
+/// Decompress a .gz attachment into the app-sandboxed tmp dir and return the path.
+/// Avoids writing to the system /tmp which is readable by any process.
+/// Stable: same .gz path always produces the same temp path (idempotent on repeated calls).
+#[tauri::command]
+async fn serve_attachment(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    path: String,
+) -> Result<String, String> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+
+    let serve_tmp_dir = state.lock().await.serve_tmp_dir.clone();
+
+    // Strip .gz suffix to get the original filename (e.g. "abc123" for "abc123.gz")
+    let stem = std::path::Path::new(&path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("attachment");
+    let temp_path = serve_tmp_dir.join(stem);
+
+    if !temp_path.exists() {
+        let gz_bytes = std::fs::read(&path).map_err(|e| format!("Cannot read file: {e}"))?;
+        let mut decoder = GzDecoder::new(gz_bytes.as_slice());
+        let mut raw = Vec::new();
+        decoder.read_to_end(&mut raw).map_err(|e| format!("Decompression failed: {e}"))?;
+        std::fs::write(&temp_path, &raw).map_err(|e| format!("Failed to write temp file: {e}"))?;
+    }
+
+    Ok(temp_path.to_string_lossy().into_owned())
+}
+
+/// Show a native save dialog and move the decompressed tmp file to the user-chosen destination.
+/// Used for document attachments — the user picks where to save the file.
+#[tauri::command]
+async fn save_attachment_as(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    tmp_path: String,
+    suggested_name: String,
+) -> Result<(), String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let app_handle = {
+        let s = state.lock().await;
+        s.app_handle.as_ref()
+            .and_then(|h| h.downcast_ref::<tauri::AppHandle<tauri::Wry>>())
+            .cloned()
+    };
+    let Some(handle) = app_handle else {
+        return Err("App handle unavailable".to_string());
+    };
+
+    let Some(dest_path) = handle.dialog()
+        .file()
+        .set_file_name(&suggested_name)
+        .blocking_save_file()
+    else {
+        return Ok(()); // user cancelled
+    };
+    let dest_str = match dest_path {
+        tauri_plugin_dialog::FilePath::Path(p) => p.to_string_lossy().into_owned(),
+        tauri_plugin_dialog::FilePath::Url(u) => u.path().to_owned(),
+    };
+    let src = std::path::Path::new(&tmp_path);
+
+    // Move: try rename first (fast, same filesystem), fall back to copy+delete
+    if std::fs::rename(src, &dest_str).is_err() {
+        std::fs::copy(src, &dest_str).map_err(|e| format!("Copy failed: {e}"))?;
+        std::fs::remove_file(src).ok();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -464,6 +854,7 @@ async fn decrypt(
 ) -> Result<Option<String>, String> {
     eprintln!("[MLS] decrypt called: user={user_id}, group={group_id}");
     let mut s = state.lock().await;
+    let attachments_dir = s.attachments_dir.clone();
     let MlsState { providers, groups, .. } = &mut *s;
 
     let provider = providers.get(&user_id)
@@ -494,7 +885,9 @@ async fn decrypt(
         ProcessedMessageContent::ApplicationMessage(app_msg) => {
             let bytes = app_msg.into_bytes();
             let text = String::from_utf8_lossy(&bytes).into_owned();
-            Ok(Some(text))
+            // Post-process: extract gzip attachment content to disk, replace with _localPath
+            let processed_text = extract_attachments_to_disk(&text, &attachments_dir);
+            Ok(Some(processed_text))
         }
         ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
             group.merge_staged_commit(provider, *staged_commit)
@@ -1226,7 +1619,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             load_group,
             join_group,
             delete_group,
+            prepare_attachment_bytes,
+            prepare_attachment_file,
+            remove_attachment,
             encrypt,
+            send_message,
+            discard_message,
+            serve_attachment,
+            save_attachment_as,
             decrypt,
             add_member,
             remove_group_member_client,

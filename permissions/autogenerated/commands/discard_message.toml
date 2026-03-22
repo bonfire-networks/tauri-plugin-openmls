@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-discard-message"
+description = "Enables the discard_message command without any pre-configured scope."
+commands.allow = ["discard_message"]
+
+[[permission]]
+identifier = "deny-discard-message"
+description = "Denies the discard_message command without any pre-configured scope."
+commands.deny = ["discard_message"]

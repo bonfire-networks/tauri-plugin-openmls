@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-serve-attachment"
+description = "Enables the serve_attachment command without any pre-configured scope."
+commands.allow = ["serve_attachment"]
+
+[[permission]]
+identifier = "deny-serve-attachment"
+description = "Denies the serve_attachment command without any pre-configured scope."
+commands.deny = ["serve_attachment"]

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-prepare-attachment-bytes"
+description = "Enables the prepare_attachment_bytes command without any pre-configured scope."
+commands.allow = ["prepare_attachment_bytes"]
+
+[[permission]]
+identifier = "deny-prepare-attachment-bytes"
+description = "Denies the prepare_attachment_bytes command without any pre-configured scope."
+commands.deny = ["prepare_attachment_bytes"]
