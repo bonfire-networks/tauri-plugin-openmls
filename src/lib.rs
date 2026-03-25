@@ -542,7 +542,9 @@ fn is_already_compressed(path: &str) -> bool {
         // Audio (lossy — already compressed)
         "mp3" | "aac" | "m4a" | "ogg" | "opus" | "flac" |
         // Images (already compressed)
-        "jpg" | "jpeg" | "png" | "webp" | "gif" | "avif" | "jxl" |
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "avif" | "jxl" | "heif" |
+        // Documents with internal compression
+        "pdf" |
         // Office / container formats (zip-based)
         "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "epub" | "apk" | "jar"
     )
