@@ -897,7 +897,7 @@ async fn decrypt(
     user_id: String,
     group_id: String,
     ciphertext_b64: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<serde_json::Value>, String> {
     eprintln!("[MLS] decrypt called: user={user_id}, group={group_id}");
     let mut s = state.lock().await;
     let attachments_dir = s.attachments_dir.clone();
@@ -927,13 +927,33 @@ async fn decrypt(
             format!("Decryption failed: {e:?}")
         })?;
 
+    // Extract sender client identity before consuming ProcessedMessage
+    let (sender_identity, sender_signature_key) = match processed.sender() {
+        Sender::Member(leaf_index) => {
+            group.members()
+                .find(|m| m.index == *leaf_index)
+                .map(|m| {
+                    let identity = String::from_utf8(m.credential.serialized_content().to_vec())
+                        .unwrap_or_default();
+                    let sig_key = BASE64.encode(m.signature_key.as_slice());
+                    (identity, sig_key)
+                })
+                .unwrap_or_default()
+        }
+        _ => (String::new(), String::new()),
+    };
+
     match processed.into_content() {
         ProcessedMessageContent::ApplicationMessage(app_msg) => {
             let bytes = app_msg.into_bytes();
             let text = String::from_utf8_lossy(&bytes).into_owned();
             // Post-process: extract gzip attachment content to disk, replace with _localPath
             let processed_text = extract_attachments_to_disk(&text, &attachments_dir);
-            Ok(Some(processed_text))
+            Ok(Some(serde_json::json!({
+                "text": processed_text,
+                "senderIdentity": sender_identity,
+                "senderSignatureKey": sender_signature_key,
+            })))
         }
         ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
             group.merge_staged_commit(provider, *staged_commit)
