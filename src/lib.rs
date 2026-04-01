@@ -1674,6 +1674,64 @@ async fn get_key_package_fingerprint(
     }))
 }
 
+/// Sign arbitrary bytes with the user's MLS SignaturePrivateKey.
+/// Returns `{ signature: base64, signerKey: base64 }`.
+/// Used to endorse KeyPackage Add activities so the server cannot inject fake KPs.
+#[tauri::command]
+async fn sign_data(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+    data_b64: String,
+) -> Result<serde_json::Value, String> {
+    use openmls_traits::signatures::Signer;
+
+    let s = state.lock().await;
+
+    let Some((_, signer)) = s.credentials.get(&user_id) else {
+        return Err(format!("User not initialized: {user_id}"));
+    };
+
+    let data = BASE64.decode(&data_b64)
+        .map_err(|e| format!("Invalid base64: {e}"))?;
+
+    let signature = signer.sign(&data)
+        .map_err(|e| format!("Signing failed: {e:?}"))?;
+
+    let pub_key = signer.public().to_vec();
+    Ok(serde_json::json!({
+        "signature": BASE64.encode(&signature),
+        "signerKey": BASE64.encode(&pub_key),
+    }))
+}
+
+/// Verify an MLS signature produced by sign_data.
+/// `signer_key_b64` is the base64 SignaturePublicKey, `data_b64` is the signed payload,
+/// `signature_b64` is the signature. Returns true if valid.
+#[tauri::command]
+async fn verify_signature(
+    signer_key_b64: String,
+    data_b64: String,
+    signature_b64: String,
+) -> Result<bool, String> {
+    use openmls_traits::crypto::OpenMlsCrypto;
+
+    let signer_key = BASE64.decode(&signer_key_b64)
+        .map_err(|e| format!("Invalid signer key base64: {e}"))?;
+    let data = BASE64.decode(&data_b64)
+        .map_err(|e| format!("Invalid data base64: {e}"))?;
+    let signature = BASE64.decode(&signature_b64)
+        .map_err(|e| format!("Invalid signature base64: {e}"))?;
+
+    let crypto = RustCrypto::default();
+    let ok = crypto.verify_signature(
+        CIPHERSUITE.signature_algorithm(),
+        &data,
+        &signer_key,
+        &signature,
+    ).is_ok();
+    Ok(ok)
+}
+
 // ── Plugin entry point ─────────────────────────────────────────────
 
 /// Initialize the OpenMLS plugin. Register with `.plugin(tauri_plugin_openmls::init())`.
@@ -1707,6 +1765,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_group_fingerprints,
             get_own_fingerprint,
             get_key_package_fingerprint,
+            sign_data,
+            verify_signature,
         ])
         .setup(|app, _api| {
             let db_path = app.path().app_data_dir()
