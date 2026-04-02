@@ -960,6 +960,9 @@ async fn decrypt(
                 .map_err(|e| format!("Failed to merge staged commit: {e:?}"))?;
             Ok(None)
         }
+        ProcessedMessageContent::ProposalMessage(_) => {
+            Ok(Some(serde_json::json!({ "proposalBuffered": true })))
+        }
         _ => Ok(None),
     }
 }
@@ -1468,6 +1471,46 @@ async fn decommission_client(
     Ok(serde_json::json!({ "results": results, "cancelled": false }))
 }
 
+/// Commit all pending proposals in a group (e.g. after processing a self-remove proposal).
+/// Returns { commit: base64 } or null if no pending proposals.
+#[tauri::command]
+async fn commit_pending_proposals(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    user_id: String,
+    group_id: String,
+) -> Result<serde_json::Value, String> {
+    eprintln!("[MLS] commit_pending_proposals: user={user_id}, group={group_id}");
+    let mut s = state.lock().await;
+
+    let MlsState { providers, credentials, groups, .. } = &mut *s;
+    let provider = providers.get(&user_id)
+        .ok_or_else(|| format!("User not initialized: {user_id}"))?;
+    let (_, signer) = credentials.get(&user_id)
+        .ok_or_else(|| format!("No credentials for: {user_id}"))?;
+    let group = groups.get_mut(&group_id)
+        .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
+
+    match group.commit_to_pending_proposals(provider, signer) {
+        Ok((commit_msg, _welcome, _group_info)) => {
+            let bytes = commit_msg.tls_serialize_detached()
+                .map_err(|e| format!("Serialization error: {e:?}"))?;
+            group.merge_pending_commit(provider)
+                .map_err(|e| format!("Failed to merge commit: {e:?}"))?;
+            eprintln!("[MLS] commit_pending_proposals: committed for group {group_id}");
+            Ok(serde_json::json!({ "commit": BASE64.encode(&bytes) }))
+        }
+        Err(e) => {
+            let msg = format!("{e:?}");
+            if msg.contains("NoPendingProposals") || msg.contains("NoPendingCommit") {
+                eprintln!("[MLS] commit_pending_proposals: no pending proposals for {group_id}");
+                Ok(serde_json::json!(null))
+            } else {
+                Err(format!("Failed to commit pending proposals: {msg}"))
+            }
+        }
+    }
+}
+
 /// Decommission current client from all groups, back up and delete the MLS database.
 /// Returns { results: [{groupId, commit, isSelfRemove}], cancelled: bool }
 #[tauri::command]
@@ -1478,11 +1521,27 @@ async fn clear_all_data(
     eprintln!("[MLS] clear_all_data called for: {user_id}");
     let mut s = state.lock().await;
 
-    // Confirm with native dialog
-    if !s.confirm(
-        "Clear All Data",
-        "This will remove your device from all groups and delete all encryption keys and message history. You will need to log in again.",
-    ) {
+    // Check if this is the only device — own key present in any group means at least one co-device exists
+    let own_pub = s.credentials.get(&user_id).map(|(_, sk)| sk.public().to_vec());
+    let has_co_device = own_pub.as_ref().map_or(false, |own_key| {
+        s.groups.values().any(|group| {
+            group.members().any(|m| m.signature_key.as_slice() != own_key.as_slice())
+        })
+    });
+
+    let (title, message) = if has_co_device {
+        (
+            "Clear All Data",
+            "This will remove your device from all groups and delete all encryption keys and message history. You will need to log in again.",
+        )
+    } else {
+        (
+            "No Other Devices — Irrecoverable",
+            "You have no other devices linked to this account. Removing this device will permanently delete your encryption keys and chat history — there is no way to recover them.\n\nAre you sure you want to continue?",
+        )
+    };
+
+    if !s.confirm(title, message) {
         return Ok(serde_json::json!({ "results": [], "cancelled": true }));
     }
 
@@ -1762,6 +1821,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             extract_group_id,
             get_group_member_identities,
             remove_self_from_group,
+            commit_pending_proposals,
             get_group_fingerprints,
             get_own_fingerprint,
             get_key_package_fingerprint,
