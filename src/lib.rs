@@ -1230,7 +1230,40 @@ const FINGERPRINT_EMOJIS: [[&str; 2]; 350] = [
 
 /// Convert a signature key to a 5-emoji fingerprint (~42.3 bits of entropy).
 /// SHA-256 the key, use 2-byte windows modulo 350 for each of 5 emoji indices.
-fn signature_key_to_emoji_fingerprint(sig_key: &[u8]) -> Vec<[&str; 2]> {
+///
+/// # Examples
+///
+/// ```
+/// # use tauri_plugin_openmls::signature_key_to_emoji_fingerprint;
+/// let fp = signature_key_to_emoji_fingerprint(b"test key A");
+/// assert_eq!(fp.len(), 5);
+/// assert_eq!(fp, [["🕌", "Mosque"], ["🍉", "Watermelon"], ["🧃", "Juice Box"], ["🩻", "X-Ray"], ["🥜", "Peanut"]]);
+/// ```
+///
+/// ```
+/// # use tauri_plugin_openmls::signature_key_to_emoji_fingerprint;
+/// let fp = signature_key_to_emoji_fingerprint(b"test key 2");
+/// assert_eq!(fp.len(), 5);
+/// assert_eq!(fp, [["🌕", "Full Moon"], ["🌏", "Globe"], ["🛶", "Canoe"], ["🫖", "Teapot"], ["🦚", "Peacock"]]);
+/// ```
+///
+/// Different keys produce different fingerprints:
+///
+/// ```
+/// # use tauri_plugin_openmls::signature_key_to_emoji_fingerprint;
+/// assert_ne!(
+///     signature_key_to_emoji_fingerprint(b"key_one"),
+///     signature_key_to_emoji_fingerprint(b"key_two")
+/// );
+/// ```
+///
+/// Empty input does not panic:
+///
+/// ```
+/// # use tauri_plugin_openmls::signature_key_to_emoji_fingerprint;
+/// assert_eq!(signature_key_to_emoji_fingerprint(b"").len(), 5);
+/// ```
+pub fn signature_key_to_emoji_fingerprint(sig_key: &[u8]) -> Vec<[&str; 2]> {
     use sha2::{Sha256, Digest};
     let hash = Sha256::digest(sig_key);
     (0..5).map(|i| {
