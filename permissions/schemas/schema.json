@@ -319,6 +319,18 @@
           "markdownDescription": "Denies the clear_all_data command without any pre-configured scope."
         },
         {
+          "description": "Enables the commit_pending_proposals command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-commit-pending-proposals",
+          "markdownDescription": "Enables the commit_pending_proposals command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the commit_pending_proposals command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-commit-pending-proposals",
+          "markdownDescription": "Denies the commit_pending_proposals command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_group command without any pre-configured scope.",
           "type": "string",
           "const": "allow-create-group",
@@ -619,10 +631,34 @@
           "markdownDescription": "Denies the serve_attachment command without any pre-configured scope."
         },
         {
-          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-prepare-attachment-bytes`\n- `allow-prepare-attachment-file`\n- `allow-remove-attachment`\n- `allow-encrypt`\n- `allow-send-message`\n- `allow-discard-message`\n- `allow-serve-attachment`\n- `allow-save-attachment-as`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`",
+          "description": "Enables the sign_data command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sign-data",
+          "markdownDescription": "Enables the sign_data command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sign_data command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sign-data",
+          "markdownDescription": "Denies the sign_data command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the verify_signature command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-verify-signature",
+          "markdownDescription": "Enables the verify_signature command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the verify_signature command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-verify-signature",
+          "markdownDescription": "Denies the verify_signature command without any pre-configured scope."
+        },
+        {
+          "description": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-prepare-attachment-bytes`\n- `allow-prepare-attachment-file`\n- `allow-remove-attachment`\n- `allow-encrypt`\n- `allow-send-message`\n- `allow-discard-message`\n- `allow-serve-attachment`\n- `allow-save-attachment-as`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`\n- `allow-commit-pending-proposals`\n- `allow-sign-data`\n- `allow-verify-signature`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-prepare-attachment-bytes`\n- `allow-prepare-attachment-file`\n- `allow-remove-attachment`\n- `allow-encrypt`\n- `allow-send-message`\n- `allow-discard-message`\n- `allow-serve-attachment`\n- `allow-save-attachment-as`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`"
+          "markdownDescription": "Allows all MLS plugin commands\n#### This default permission set includes:\n\n- `allow-init-user`\n- `allow-create-group`\n- `allow-load-group`\n- `allow-join-group`\n- `allow-delete-group`\n- `allow-prepare-attachment-bytes`\n- `allow-prepare-attachment-file`\n- `allow-remove-attachment`\n- `allow-encrypt`\n- `allow-send-message`\n- `allow-discard-message`\n- `allow-serve-attachment`\n- `allow-save-attachment-as`\n- `allow-decrypt`\n- `allow-add-member`\n- `allow-export-ratchet-tree`\n- `allow-create-key-package`\n- `allow-extract-group-id`\n- `allow-get-group-member-identities`\n- `allow-remove-self-from-group`\n- `allow-get-group-fingerprints`\n- `allow-remove-group-member-client`\n- `allow-remove-group-member`\n- `allow-decommission-client`\n- `allow-clear-all-data`\n- `allow-get-own-fingerprint`\n- `allow-get-key-package-fingerprint`\n- `allow-commit-pending-proposals`\n- `allow-sign-data`\n- `allow-verify-signature`"
         }
       ]
     }

@@ -31,6 +31,9 @@ Allows all MLS plugin commands
 - `allow-clear-all-data`
 - `allow-get-own-fingerprint`
 - `allow-get-key-package-fingerprint`
+- `allow-commit-pending-proposals`
+- `allow-sign-data`
+- `allow-verify-signature`
 
 ## Permission Table
 
@@ -89,6 +92,32 @@ Enables the clear_all_data command without any pre-configured scope.
 <td>
 
 Denies the clear_all_data command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-commit-pending-proposals`
+
+</td>
+<td>
+
+Enables the commit_pending_proposals command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-commit-pending-proposals`
+
+</td>
+<td>
+
+Denies the commit_pending_proposals command without any pre-configured scope.
 
 </td>
 </tr>
@@ -739,6 +768,58 @@ Enables the serve_attachment command without any pre-configured scope.
 <td>
 
 Denies the serve_attachment command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-sign-data`
+
+</td>
+<td>
+
+Enables the sign_data command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-sign-data`
+
+</td>
+<td>
+
+Denies the sign_data command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-verify-signature`
+
+</td>
+<td>
+
+Enables the verify_signature command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-verify-signature`
+
+</td>
+<td>
+
+Denies the verify_signature command without any pre-configured scope.
 
 </td>
 </tr>
