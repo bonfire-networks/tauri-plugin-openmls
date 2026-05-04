@@ -145,18 +145,23 @@ impl MlsState {
 
     /// Show a native confirmation dialog. Returns true if confirmed.
     fn confirm(&self, title: &str, message: &str) -> bool {
-        use tauri_plugin_dialog::MessageDialogButtons;
-        if let Some(handle) = self.app_handle.as_ref()
-            .and_then(|h| h.downcast_ref::<tauri::AppHandle<tauri::Wry>>())
+        #[cfg(feature = "e2e-testing")]
+        { let _ = (title, message); return true; }
+        #[cfg(not(feature = "e2e-testing"))]
         {
-            handle.dialog()
-                .message(message)
-                .title(title)
-                .kind(MessageDialogKind::Warning)
-                .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
-                .blocking_show()
-        } else {
-            true // no handle = skip confirmation
+            use tauri_plugin_dialog::MessageDialogButtons;
+            if let Some(handle) = self.app_handle.as_ref()
+                .and_then(|h| h.downcast_ref::<tauri::AppHandle<tauri::Wry>>())
+            {
+                handle.dialog()
+                    .message(message)
+                    .title(title)
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
+                    .blocking_show()
+            } else {
+                true // no handle = skip confirmation
+            }
         }
     }
 }
@@ -960,7 +965,9 @@ async fn decrypt(
                 .map_err(|e| format!("Failed to merge staged commit: {e:?}"))?;
             Ok(None)
         }
-        ProcessedMessageContent::ProposalMessage(_) => {
+        ProcessedMessageContent::ProposalMessage(staged_proposal) => {
+            group.store_pending_proposal(provider.storage(), *staged_proposal)
+                .map_err(|e| format!("Failed to store pending proposal: {e:?}"))?;
             Ok(Some(serde_json::json!({ "proposalBuffered": true })))
         }
         _ => Ok(None),
@@ -1552,7 +1559,8 @@ async fn commit_pending_proposals(
                 .map_err(|e| format!("Serialization error: {e:?}"))?;
             group.merge_pending_commit(provider)
                 .map_err(|e| format!("Failed to merge commit: {e:?}"))?;
-            eprintln!("[MLS] commit_pending_proposals: committed for group {group_id}");
+            let post_member_count = group.members().count();
+            eprintln!("[MLS] commit_pending_proposals: committed for group {group_id}, members_after={post_member_count}");
             Ok(serde_json::json!({ "commit": BASE64.encode(&bytes) }))
         }
         Err(e) => {
@@ -1714,6 +1722,7 @@ async fn get_group_fingerprints(
         }));
     }
 
+    eprintln!("[MLS] get_group_fingerprints: group={group_id} total_members={} own_count={}", result.len(), result.iter().filter(|r| r["isOwn"].as_bool().unwrap_or(false)).count());
     Ok(result)
 }
 
