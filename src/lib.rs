@@ -967,12 +967,28 @@ async fn decrypt(
     }
 }
 
+/// Stage a self-update proposal so the next commit includes an UpdatePath (committer leaf rotation).
+/// Provides post-compromise security (PCS) per RFC 9420 §12.4. No-op when `rotate` is false.
+fn maybe_stage_self_update(
+    group: &mut MlsGroup,
+    provider: &TauriOpenMLSProvider,
+    signer: &SignatureKeyPair,
+    rotate: bool,
+) -> Result<(), String> {
+    if rotate {
+        group.propose_self_update(provider, signer, LeafNodeParameters::default())
+            .map_err(|e| format!("Failed to stage self-update: {e:?}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn add_member(
     state: tauri::State<'_, Mutex<MlsState>>,
     user_id: String,
     group_id: String,
     key_package_b64: String,
+    rotate_leaf: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     eprintln!("[MLS] add_member called: user={user_id}, group={group_id}");
     let mut s = state.lock().await;
@@ -995,9 +1011,11 @@ async fn add_member(
         .validate(provider.crypto(), ProtocolVersion::Mls10)
         .map_err(|e| format!("Failed to validate key package: {e:?}"))?;
 
-    let (mls_message_out, welcome_out, _group_info) = group
-        .add_members(provider, signer, &[key_package])
-        .map_err(|e| format!("Failed to add member: {e:?}"))?;
+    let (mls_message_out, welcome_out, _group_info) = if rotate_leaf.unwrap_or(true) {
+        group.add_members(provider, signer, &[key_package])
+    } else {
+        group.add_members_without_update(provider, signer, &[key_package])
+    }.map_err(|e| format!("Failed to add member: {e:?}"))?;
 
     let commit_serialized = mls_message_out
         .tls_serialize_detached()
@@ -1287,8 +1305,10 @@ fn do_remove_leaves(
     signer: &SignatureKeyPair,
     group: &mut MlsGroup,
     indexes: &[LeafNodeIndex],
+    rotate_leaf: bool,
 ) -> Result<(String, usize), String> {
     let count = indexes.len();
+    maybe_stage_self_update(group, provider, signer, rotate_leaf)?;
     let (commit, _welcome, _group_info) = group
         .remove_members(provider, signer, indexes)
         .map_err(|e| format!("Failed to remove members: {e:?}"))?;
@@ -1307,6 +1327,7 @@ async fn remove_group_member_client(
     user_id: String,
     group_id: String,
     leaf_indexes: Vec<u32>,
+    rotate_leaf: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     eprintln!("[MLS] remove_group_member_client called: user={user_id}, group={group_id}, indexes={leaf_indexes:?}");
     let mut s = state.lock().await;
@@ -1326,7 +1347,7 @@ async fn remove_group_member_client(
     let indexes: Vec<LeafNodeIndex> = leaf_indexes.iter()
         .map(|&i| LeafNodeIndex::new(i)).collect();
 
-    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &indexes)?;
+    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &indexes, rotate_leaf.unwrap_or(true))?;
     eprintln!("[MLS] remove_group_member_client: removed {count} leaf(s) from group {group_id}");
     Ok(serde_json::json!({ "commit": commit_b64 }))
 }
@@ -1367,7 +1388,7 @@ async fn remove_group_member(
         return Err(format!("Member not found in group: {member_id}"));
     }
 
-    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &indexes)?;
+    let (commit_b64, count) = do_remove_leaves(provider, signer, group, &indexes, true)?;
     eprintln!("[MLS] remove_group_member: removed {count} leaf(s) of {member_id} from group {group_id}");
     Ok(serde_json::json!({ "commit": commit_b64, "removedCount": count }))
 }
@@ -1489,7 +1510,7 @@ async fn decommission_client(
                 .collect();
             if indexes.is_empty() { continue; }
 
-            match do_remove_leaves(provider, signer, group, &indexes) {
+            match do_remove_leaves(provider, signer, group, &indexes, true) {
                 Ok((commit_b64, count)) => {
                     eprintln!("[MLS] decommission_client: removed {count} leaf(s) from group {gid}");
                     results.push(serde_json::json!({ "groupId": gid, "commit": commit_b64 }));
@@ -1511,6 +1532,7 @@ async fn commit_pending_proposals(
     state: tauri::State<'_, Mutex<MlsState>>,
     user_id: String,
     group_id: String,
+    rotate_leaf: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     eprintln!("[MLS] commit_pending_proposals: user={user_id}, group={group_id}");
     let mut s = state.lock().await;
@@ -1523,6 +1545,7 @@ async fn commit_pending_proposals(
     let group = groups.get_mut(&group_id)
         .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
 
+    maybe_stage_self_update(group, provider, signer, rotate_leaf.unwrap_or(true))?;
     match group.commit_to_pending_proposals(provider, signer) {
         Ok((commit_msg, _welcome, _group_info)) => {
             let bytes = commit_msg.tls_serialize_detached()
