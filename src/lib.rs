@@ -1011,6 +1011,13 @@ async fn add_member(
     let kp_bytes = BASE64.decode(&key_package_b64)
         .map_err(|e| format!("Invalid base64 key package: {e}"))?;
 
+    if kp_bytes.len() >= 4 {
+        let cs = u16::from_be_bytes([kp_bytes[2], kp_bytes[3]]);
+        if !matches!(cs, 0x0001 | 0x0002 | 0x0003) {
+            return Err(format!("Unsupported MLS ciphersuite 0x{cs:04X}"));
+        }
+    }
+
     let key_package_in = KeyPackageIn::tls_deserialize(&mut kp_bytes.as_slice())
         .map_err(|e| format!("Failed to deserialize key package: {e:?}"))?;
 
@@ -1786,6 +1793,17 @@ async fn get_key_package_fingerprint(
 ) -> Result<serde_json::Value, String> {
     let kp_bytes = BASE64.decode(&key_package_b64)
         .map_err(|e| format!("Invalid base64: {e}"))?;
+
+    // Bytes 2-3 are the ciphersuite. Only 0x0001, 0x0002, 0x0003 are supported by
+    // openmls_rust_crypto; other suites (e.g. P521/0x0005) panic deep in tls_codec.
+    if kp_bytes.len() < 4 {
+        return Err("Key package too short".into());
+    }
+    let cs = u16::from_be_bytes([kp_bytes[2], kp_bytes[3]]);
+    if !matches!(cs, 0x0001 | 0x0002 | 0x0003) {
+        return Err(format!("Unsupported MLS ciphersuite 0x{cs:04X} — only MLS_128_* suites are supported"));
+    }
+
     let kp_in = KeyPackageIn::tls_deserialize(&mut kp_bytes.as_slice())
         .map_err(|e| format!("Failed to deserialize key package: {e:?}"))?;
     let crypto = RustCrypto::default();
