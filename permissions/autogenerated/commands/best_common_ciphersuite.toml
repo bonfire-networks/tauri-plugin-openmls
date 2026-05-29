@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-best-common-ciphersuite"
+description = "Enables the best_common_ciphersuite command without any pre-configured scope."
+commands.allow = ["best_common_ciphersuite"]
+
+[[permission]]
+identifier = "deny-best-common-ciphersuite"
+description = "Denies the best_common_ciphersuite command without any pre-configured scope."
+commands.deny = ["best_common_ciphersuite"]

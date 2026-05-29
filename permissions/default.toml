@@ -31,4 +31,5 @@ permissions = [
     "allow-commit-pending-proposals",
     "allow-sign-data",
     "allow-verify-signature",
+    "allow-best-common-ciphersuite",
 ]

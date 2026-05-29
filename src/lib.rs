@@ -110,6 +110,8 @@ pub struct MlsState {
     pending_attachments: HashMap<String, (PathBuf, String)>,
     /// Pending encrypted messages: pendingId → base64(ciphertext), awaiting send.
     pending_messages: HashMap<String, String>,
+    /// Preferred ciphersuite order (most preferred first). Defaults to [0x0001, 0x0002, 0x0003].
+    ciphersuite_preference: Vec<u16>,
 }
 
 impl MlsState {
@@ -140,6 +142,7 @@ impl MlsState {
             groups: HashMap::new(),
             pending_attachments: HashMap::new(),
             pending_messages: HashMap::new(),
+            ciphersuite_preference: vec![0x0001, 0x0002, 0x0003],
         }
     }
 
@@ -170,6 +173,21 @@ const CIPHERSUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+/// Deserialize a KeyPackage from bytes.
+/// Accepts both raw `KeyPackage` TLS encoding (our own format) and
+/// `MLSMessage`-wrapped KeyPackages (used by Emissary and other implementations).
+fn deserialize_key_package(bytes: &[u8]) -> Result<KeyPackageIn, String> {
+    if let Ok(msg) = MlsMessageIn::tls_deserialize(&mut bytes.clone()) {
+        match msg.extract() {
+            MlsMessageBodyIn::KeyPackage(kp_in) => Ok(kp_in),
+            _ => Err("MLS message is not a KeyPackage".into()),
+        }
+    } else {
+        KeyPackageIn::tls_deserialize(&mut bytes.clone())
+            .map_err(|e| format!("Failed to deserialize key package: {e:?}"))
+    }
+}
 
 fn sanitize_filename(s: &str) -> String {
     s.chars()
@@ -376,14 +394,34 @@ async fn init_user(
     Ok(())
 }
 
+/// Returns the best ciphersuite common to all member sets, ranked by the configured preference.
+/// `member_suites` is one array of supported suite IDs per member (including self).
+/// Returns null if no common suite exists.
+#[tauri::command]
+async fn best_common_ciphersuite(
+    state: tauri::State<'_, Mutex<MlsState>>,
+    member_suites: Vec<Vec<u16>>,
+) -> Result<Option<u16>, String> {
+    if member_suites.is_empty() {
+        return Ok(None);
+    }
+    let s = state.lock().await;
+    for &suite in &s.ciphersuite_preference {
+        if member_suites.iter().all(|suites| suites.contains(&suite)) {
+            return Ok(Some(suite));
+        }
+    }
+    Ok(None)
+}
 
 #[tauri::command]
 async fn create_group(
     state: tauri::State<'_, Mutex<MlsState>>,
     user_id: String,
     group_id: String,
+    ciphersuite: Option<u16>,
 ) -> Result<serde_json::Value, String> {
-    eprintln!("[MLS] create_group called: user={user_id}, group={group_id}");
+    eprintln!("[MLS] create_group called: user={user_id}, group={group_id}, ciphersuite={ciphersuite:?}");
     let mut s = state.lock().await;
 
     let provider = s.providers.get(&user_id)
@@ -401,8 +439,16 @@ async fn create_group(
         }));
     }
 
+    let cs = match ciphersuite.unwrap_or(0x0001) {
+        0x0001 => Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
+        0x0002 => Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256,
+        0x0003 => Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519,
+        other  => return Err(format!("Unsupported ciphersuite 0x{other:04X}")),
+    };
+
     let group_id_bytes = group_id.as_bytes();
     let mls_group_create_config = MlsGroupCreateConfig::builder()
+        .ciphersuite(cs)
         .use_ratchet_tree_extension(true)
         .build();
 
@@ -1011,17 +1057,7 @@ async fn add_member(
     let kp_bytes = BASE64.decode(&key_package_b64)
         .map_err(|e| format!("Invalid base64 key package: {e}"))?;
 
-    if kp_bytes.len() >= 4 {
-        let cs = u16::from_be_bytes([kp_bytes[2], kp_bytes[3]]);
-        if !matches!(cs, 0x0001 | 0x0002 | 0x0003) {
-            return Err(format!("Unsupported MLS ciphersuite 0x{cs:04X}"));
-        }
-    }
-
-    let key_package_in = KeyPackageIn::tls_deserialize(&mut kp_bytes.as_slice())
-        .map_err(|e| format!("Failed to deserialize key package: {e:?}"))?;
-
-    let key_package = key_package_in
+    let key_package = deserialize_key_package(&kp_bytes)?
         .validate(provider.crypto(), ProtocolVersion::Mls10)
         .map_err(|e| format!("Failed to validate key package: {e:?}"))?;
 
@@ -1096,7 +1132,8 @@ async fn create_key_package(
         .map_err(|e| format!("Serialization error: {e:?}"))?;
 
     Ok(serde_json::json!({
-        "keyPackageBytes": BASE64.encode(&serialized)
+        "keyPackageBytes": BASE64.encode(&serialized),
+        "ciphersuite": format!("{CIPHERSUITE:?}"),
     }))
 }
 
@@ -1794,20 +1831,9 @@ async fn get_key_package_fingerprint(
     let kp_bytes = BASE64.decode(&key_package_b64)
         .map_err(|e| format!("Invalid base64: {e}"))?;
 
-    // Bytes 2-3 are the ciphersuite. Only 0x0001, 0x0002, 0x0003 are supported by
-    // openmls_rust_crypto; other suites (e.g. P521/0x0005) panic deep in tls_codec.
-    if kp_bytes.len() < 4 {
-        return Err("Key package too short".into());
-    }
-    let cs = u16::from_be_bytes([kp_bytes[2], kp_bytes[3]]);
-    if !matches!(cs, 0x0001 | 0x0002 | 0x0003) {
-        return Err(format!("Unsupported MLS ciphersuite 0x{cs:04X} — only MLS_128_* suites are supported"));
-    }
-
-    let kp_in = KeyPackageIn::tls_deserialize(&mut kp_bytes.as_slice())
-        .map_err(|e| format!("Failed to deserialize key package: {e:?}"))?;
     let crypto = RustCrypto::default();
-    let kp = kp_in.validate(&crypto, ProtocolVersion::Mls10)
+    let kp = deserialize_key_package(&kp_bytes)?
+        .validate(&crypto, ProtocolVersion::Mls10)
         .map_err(|e| format!("Failed to validate key package: {e:?}"))?;
     let sig_key = kp.leaf_node().signature_key().as_slice();
     Ok(serde_json::json!({
@@ -1881,6 +1907,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::<R>::new("openmls")
         .invoke_handler(tauri::generate_handler![
             init_user,
+            best_common_ciphersuite,
             create_group,
             load_group,
             join_group,

@@ -34,6 +34,7 @@ Allows all MLS plugin commands
 - `allow-commit-pending-proposals`
 - `allow-sign-data`
 - `allow-verify-signature`
+- `allow-best-common-ciphersuite`
 
 ## Permission Table
 
@@ -66,6 +67,32 @@ Enables the add_member command without any pre-configured scope.
 <td>
 
 Denies the add_member command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:allow-best-common-ciphersuite`
+
+</td>
+<td>
+
+Enables the best_common_ciphersuite command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`openmls:deny-best-common-ciphersuite`
+
+</td>
+<td>
+
+Denies the best_common_ciphersuite command without any pre-configured scope.
 
 </td>
 </tr>
