@@ -527,9 +527,9 @@ async fn join_group(
     user_id: String,
     group_id: String,
     welcome_b64: String,
-    ratchet_tree_b64: String,
+    ratchet_tree_b64: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    eprintln!("[MLS] join_group called: user={user_id}, group={group_id}");
+    eprintln!("[MLS] join_group called: user={user_id}, group={group_id}, has_ratchet_tree={}", ratchet_tree_b64.is_some());
     let mut s = state.lock().await;
 
     if s.groups.contains_key(&group_id) {
@@ -541,8 +541,6 @@ async fn join_group(
 
     let welcome_bytes = BASE64.decode(&welcome_b64)
         .map_err(|e| format!("Invalid base64 welcome: {e}"))?;
-    let ratchet_tree_bytes = BASE64.decode(&ratchet_tree_b64)
-        .map_err(|e| format!("Invalid base64 ratchet tree: {e}"))?;
 
     let mls_message_in = MlsMessageIn::tls_deserialize(&mut welcome_bytes.as_slice())
         .map_err(|e| format!("Failed to deserialize welcome: {e:?}"))?;
@@ -552,14 +550,22 @@ async fn join_group(
         _ => return Err("Expected Welcome message".into()),
     };
 
-    let ratchet_tree = RatchetTreeIn::tls_deserialize(&mut ratchet_tree_bytes.as_slice())
-        .map_err(|e| format!("Failed to deserialize ratchet tree: {e:?}"))?;
+    // ratchet_tree_b64 is optional: when absent, OpenMLS reads the tree from the
+    // Welcome's embedded ratchet_tree extension (RFC 9420 §12.4.3.3).
+    let ratchet_tree = ratchet_tree_b64
+        .map(|b64| {
+            let bytes = BASE64.decode(&b64)
+                .map_err(|e| format!("Invalid base64 ratchet tree: {e}"))?;
+            RatchetTreeIn::tls_deserialize(&mut bytes.as_slice())
+                .map_err(|e| format!("Failed to deserialize ratchet tree: {e:?}"))
+        })
+        .transpose()?;
 
     let staged = StagedWelcome::new_from_welcome(
         provider,
         &MlsGroupJoinConfig::default(),
         welcome,
-        Some(ratchet_tree),
+        ratchet_tree,
     )
     .map_err(|e| format!("Failed to create staged welcome: {e:?}"))?;
 
