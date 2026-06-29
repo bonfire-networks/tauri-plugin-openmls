@@ -178,15 +178,22 @@ const CIPHERSUITE: Ciphersuite =
 /// Accepts both raw `KeyPackage` TLS encoding (our own format) and
 /// `MLSMessage`-wrapped KeyPackages (used by Emissary and other implementations).
 fn deserialize_key_package(bytes: &[u8]) -> Result<KeyPackageIn, String> {
-    if let Ok(msg) = MlsMessageIn::tls_deserialize(&mut bytes.clone()) {
-        match msg.extract() {
-            MlsMessageBodyIn::KeyPackage(kp_in) => Ok(kp_in),
-            _ => Err("MLS message is not a KeyPackage".into()),
+    // tls_deserialize may panic (assertion `len_len_log <= MAX_LEN_LEN_LOG`) on corrupted bytes.
+    // Catch the panic so callers get an Err instead of a process abort.
+    let bytes_owned = bytes.to_vec();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Ok(msg) = MlsMessageIn::tls_deserialize(&mut bytes_owned.as_slice()) {
+            match msg.extract() {
+                MlsMessageBodyIn::KeyPackage(kp_in) => Ok(kp_in),
+                _ => Err("MLS message is not a KeyPackage".into()),
+            }
+        } else {
+            KeyPackageIn::tls_deserialize(&mut bytes_owned.as_slice())
+                .map_err(|e| format!("Failed to deserialize key package: {e:?}"))
         }
-    } else {
-        KeyPackageIn::tls_deserialize(&mut bytes.clone())
-            .map_err(|e| format!("Failed to deserialize key package: {e:?}"))
-    }
+    }))
+    .map_err(|_| "KeyPackage TLS deserialization panicked (corrupted or unsupported format)".to_string())
+    .and_then(|r| r)
 }
 
 fn sanitize_filename(s: &str) -> String {
@@ -253,6 +260,43 @@ fn extract_attachments_to_disk(json_text: &str, attachments_dir: &std::path::Pat
     }
 
     process(&mut val, attachments_dir);
+    serde_json::to_string(&val).unwrap_or_else(|_| json_text.to_owned())
+}
+
+/// Walk decrypted JSON and sanitize HTML `content` on text-type objects.
+/// Any object with `type` in `["Note", "Article"]` has its `content` field run through
+/// ammonia's safe-HTML cleaner, stripping scripts and other dangerous markup.
+fn sanitize_message_content(json_text: &str) -> String {
+    let Ok(mut val) = serde_json::from_str::<serde_json::Value>(json_text) else {
+        return json_text.to_owned();
+    };
+
+    const TEXT_TYPES: &[&str] = &["Note", "Article"];
+
+    fn process(val: &mut serde_json::Value) {
+        match val {
+            serde_json::Value::Object(map) => {
+                let is_text_type = map.get("type")
+                    .and_then(|v| v.as_str())
+                    .map(|t| TEXT_TYPES.contains(&t))
+                    .unwrap_or(false);
+                if is_text_type {
+                    for field in &["content"] {
+                        if let Some(serde_json::Value::String(s)) = map.get_mut(*field) {
+                            *s = ammonia::clean(s);
+                        }
+                    }
+                }
+                for v in map.values_mut() { process(v); }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() { process(v); }
+            }
+            _ => {}
+        }
+    }
+
+    process(&mut val);
     serde_json::to_string(&val).unwrap_or_else(|_| json_text.to_owned())
 }
 
@@ -536,48 +580,69 @@ async fn join_group(
         return Ok(serde_json::json!({ "groupId": group_id }));
     }
 
-    let provider = s.providers.get(&user_id)
+    s.providers.contains_key(&user_id)
+        .then_some(())
         .ok_or_else(|| format!("User not initialized: {user_id}"))?;
 
     let welcome_bytes = BASE64.decode(&welcome_b64)
         .map_err(|e| format!("Invalid base64 welcome: {e}"))?;
 
-    let mls_message_in = MlsMessageIn::tls_deserialize(&mut welcome_bytes.as_slice())
-        .map_err(|e| format!("Failed to deserialize welcome: {e:?}"))?;
-
-    let welcome = match mls_message_in.extract() {
-        MlsMessageBodyIn::Welcome(w) => w,
-        _ => return Err("Expected Welcome message".into()),
-    };
-
-    // ratchet_tree_b64 is optional: when absent, OpenMLS reads the tree from the
-    // Welcome's embedded ratchet_tree extension (RFC 9420 §12.4.3.3).
-    let ratchet_tree = ratchet_tree_b64
-        .map(|b64| {
-            let bytes = BASE64.decode(&b64)
-                .map_err(|e| format!("Invalid base64 ratchet tree: {e}"))?;
-            RatchetTreeIn::tls_deserialize(&mut bytes.as_slice())
-                .map_err(|e| format!("Failed to deserialize ratchet tree: {e:?}"))
-        })
+    let ratchet_tree_bytes: Option<Vec<u8>> = ratchet_tree_b64
+        .map(|b64| BASE64.decode(&b64).map_err(|e| format!("Invalid base64 ratchet tree: {e}")))
         .transpose()?;
 
-    let staged = StagedWelcome::new_from_welcome(
-        provider,
-        &MlsGroupJoinConfig::default(),
-        welcome,
-        ratchet_tree,
-    )
-    .map_err(|e| format!("Failed to create staged welcome: {e:?}"))?;
+    // Use a raw pointer to provider so we can borrow s.groups mutably after the catch_unwind.
+    // SAFETY: s is mutex-locked and not moved during catch_unwind; no other thread can access it.
+    let provider_ptr = s.providers.get(&user_id).unwrap() as *const TauriOpenMLSProvider;
 
-    let group = staged
-        .into_group(provider)
-        .map_err(|e| format!("Failed to join group: {e:?}"))?;
+    let (actual_group_id, group) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let provider = unsafe { &*provider_ptr };
 
-    // Use the MLS-internal group_id as the canonical key (sender's ULID)
-    let actual_group_id = String::from_utf8(group.group_id().as_slice().to_vec())
-        .map_err(|e| format!("Group ID is not valid UTF-8: {e}"))?;
+        let mls_message_in = MlsMessageIn::tls_deserialize(&mut welcome_bytes.as_slice())
+            .map_err(|e| format!("Failed to deserialize welcome: {e:?}"))?;
+
+        let welcome = match mls_message_in.extract() {
+            MlsMessageBodyIn::Welcome(w) => w,
+            _ => return Err("Expected Welcome message".into()),
+        };
+
+        // ratchet_tree_b64 is optional: when absent, OpenMLS reads the tree from the
+        // Welcome's embedded ratchet_tree extension (RFC 9420 §12.4.3.3).
+        let ratchet_tree = ratchet_tree_bytes
+            .as_deref()
+            .map(|bytes| {
+                let mut reader: &[u8] = bytes;
+                RatchetTreeIn::tls_deserialize(&mut reader)
+                    .map_err(|e| format!("Failed to deserialize ratchet tree: {e:?}"))
+            })
+            .transpose()?;
+
+        let staged = StagedWelcome::new_from_welcome(
+            provider,
+            &MlsGroupJoinConfig::default(),
+            welcome,
+            ratchet_tree,
+        )
+        .map_err(|e| format!("Failed to create staged welcome: {e:?}"))?;
+
+        let group = staged
+            .into_group(provider)
+            .map_err(|e| format!("Failed to join group: {e:?}"))?;
+
+        let actual_group_id = String::from_utf8(group.group_id().as_slice().to_vec())
+            .map_err(|e| format!("Group ID is not valid UTF-8: {e}"))?;
+
+        Ok::<_, String>((actual_group_id, group))
+    }))
+    .map_err(|p| {
+        let msg = p.downcast_ref::<String>().cloned()
+            .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "OpenMLS panicked during join_group (corrupted state?)".to_string());
+        eprintln!("[MLS] join_group PANICKED: {msg}");
+        msg
+    })??;
+
     eprintln!("[MLS] join_group: MLS group_id={actual_group_id} (passed={group_id})");
-
     s.groups.insert(actual_group_id.clone(), group);
     Ok(serde_json::json!({ "groupId": actual_group_id }))
 }
@@ -753,7 +818,7 @@ async fn encrypt(
     group_id: String,
     plaintext: String,
     attachment_ids: Option<Vec<String>>,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     eprintln!("[MLS] encrypt called: user={user_id}, group={group_id}");
     let mut s = state.lock().await;
 
@@ -779,6 +844,9 @@ async fn encrypt(
         plaintext
     };
 
+    // Sanitize HTML content (Note, Article) before encrypting so the ciphertext and stored copy match
+    let sanitized = sanitize_message_content(&assembled);
+
     let MlsState { providers, credentials, groups, .. } = &mut *s;
 
     let provider = providers.get(&user_id)
@@ -789,7 +857,7 @@ async fn encrypt(
         .ok_or_else(|| format!("Group not loaded: {group_id}"))?;
 
     let mls_message_out = group
-        .create_message(provider, signer, assembled.as_bytes())
+        .create_message(provider, signer, sanitized.as_bytes())
         .map_err(|e| format!("Encryption failed: {e:?}"))?;
 
     let serialized = mls_message_out
@@ -801,7 +869,10 @@ async fn encrypt(
     // Store ciphertext — never returns to JS. JS gets only a placeholder ID.
     let pending_id = format!("__prepared_encrypted_msg:{}__", uuid_hex());
     s.pending_messages.insert(pending_id.clone(), b64);
-    Ok(pending_id)
+    // Return the pending ID and the sanitized plaintext object (deserialized) so JS stores what was actually encrypted
+    let sanitized_val: serde_json::Value = serde_json::from_str(&sanitized)
+        .unwrap_or(serde_json::Value::Null);
+    Ok(serde_json::json!({ "pendingId": pending_id, "plaintext": sanitized_val }))
 }
 
 /// Send a pending encrypted message. JS builds the full AP JSON body with pendingId as the
@@ -968,13 +1039,24 @@ async fn decrypt(
     let ciphertext_bytes = BASE64.decode(&ciphertext_b64)
         .map_err(|e| format!("Invalid base64 ciphertext: {e}"))?;
 
-    let mls_message_in = MlsMessageIn::tls_deserialize(&mut ciphertext_bytes.as_slice())
-        .map_err(|e| format!("Failed to deserialize message: {e:?}"))?;
-
-    let protocol_message: ProtocolMessage = match mls_message_in.extract() {
-        MlsMessageBodyIn::PrivateMessage(m) => m.into(),
-        MlsMessageBodyIn::PublicMessage(m) => m.into(),
-        _ => return Err("Unexpected message type".into()),
+    let protocol_message: ProtocolMessage = {
+        let bytes_owned = ciphertext_bytes.clone();
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            MlsMessageIn::tls_deserialize(&mut bytes_owned.as_slice())
+                .map_err(|e| format!("Failed to deserialize message: {e:?}"))
+                .and_then(|msg| match msg.extract() {
+                    MlsMessageBodyIn::PrivateMessage(m) => Ok(ProtocolMessage::from(m)),
+                    MlsMessageBodyIn::PublicMessage(m) => Ok(ProtocolMessage::from(m)),
+                    _ => Err("Unexpected message type".to_string()),
+                })
+        }))
+        .map_err(|p| {
+            let msg = p.downcast_ref::<String>().cloned()
+                .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "OpenMLS panicked during decrypt deserialization (corrupted state?)".to_string());
+            eprintln!("[MLS] decrypt tls_deserialize PANICKED: {msg}");
+            msg
+        })??
     };
 
     let processed = group
@@ -1005,7 +1087,9 @@ async fn decrypt(
             let bytes = app_msg.into_bytes();
             let text = String::from_utf8_lossy(&bytes).into_owned();
             // Post-process: extract gzip attachment content to disk, replace with _localPath
-            let processed_text = extract_attachments_to_disk(&text, &attachments_dir);
+            let extracted_text = extract_attachments_to_disk(&text, &attachments_dir);
+            // Sanitize HTML content on text-type objects (Note, Article) to prevent XSS
+            let processed_text = sanitize_message_content(&extracted_text);
             Ok(Some(serde_json::json!({
                 "text": processed_text,
                 "senderIdentity": sender_identity,
@@ -1957,3 +2041,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         })
         .build()
 }
+
+#[cfg(test)]
+mod tests;
+
