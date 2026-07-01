@@ -576,9 +576,13 @@ async fn join_group(
     eprintln!("[MLS] join_group called: user={user_id}, group={group_id}, has_ratchet_tree={}", ratchet_tree_b64.is_some());
     let mut s = state.lock().await;
 
-    if s.groups.contains_key(&group_id) {
-        return Ok(serde_json::json!({ "groupId": group_id }));
-    }
+    // Note: no early return when group already exists in s.groups.
+    // We let new_from_welcome decide:
+    // - If the Welcome is not for this device → NoMatchingKeyPackage error (JS ignores it safely,
+    //   restoring state). Prevents co-device Welcomes from corrupting existing members' state.
+    // - If the Welcome IS for this device (e.g. group reset / re-invite) → success; the existing
+    //   entry in s.groups is overwritten atomically, advancing the epoch without a delete+retry.
+    let already_in_group = s.groups.contains_key(&group_id);
 
     s.providers.contains_key(&user_id)
         .then_some(())
@@ -642,7 +646,11 @@ async fn join_group(
         msg
     })??;
 
+    if already_in_group {
+        eprintln!("[MLS] join_group: replacing stale group in memory (re-invite/reset): {group_id}");
+    }
     eprintln!("[MLS] join_group: MLS group_id={actual_group_id} (passed={group_id})");
+    // insert overwrites any existing entry — safe for both first join and re-invite
     s.groups.insert(actual_group_id.clone(), group);
     Ok(serde_json::json!({ "groupId": actual_group_id }))
 }
